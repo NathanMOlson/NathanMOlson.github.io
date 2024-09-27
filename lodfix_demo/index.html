@@ -26,17 +26,17 @@ var map = window.map = new maplibregl.Map({
         sources: {
             number: {
                 type: 'raster',
-                url: 'debug-tiles/number/tiles.json',
+                url: 'https://demotiles.maplibre.org/debug-tiles/number/tiles.json',
                 tileSize: 256
             },
             terrainSource: {
                 type: 'raster-dem',
-                url: 'debug-tiles/terrain-ruffles/tiles.json',
+                url: 'https://demotiles.maplibre.org/debug-tiles/terrain-ruffles/tiles.json',
                 tileSize: 256
             },
             hillshadeSource: {
                 type: 'raster-dem',
-                url: 'debug-tiles/number-hillshade/tiles.json',
+                url: 'https://demotiles.maplibre.org/debug-tiles/number-hillshade/tiles.json',
                 tileSize: 256
             }
         },
