@@ -168,10 +168,53 @@ class RollControl {
     }
 }
 
+class SingularPointControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+
+        let p1 = document.createElement('button');
+        p1.innerHTML = "(-89.9,-89.9)";
+        p1.onclick = (e) => {
+            this._map.easeTo({roll: -89.9, bearing:-89.9});
+        };
+
+        let p2 = document.createElement('button');
+        p2.innerHTML = "(89.9,89.9)";
+        p2.onclick = (e) => {
+            this._map.easeTo({pitch: 8,roll: 89.9, bearing:89.9});
+        };
+
+        let p3 = document.createElement('button');
+        p3.innerHTML = "(-89.9,-90.1)";
+        p3.onclick = (e) => {
+            this._map.easeTo({pitch: 8,roll: -89.9, bearing:-90.1});
+        };
+
+        let p4 = document.createElement('button');
+        p4.innerHTML = "(89.9,90.1)";
+        p4.onclick = (e) => {
+            this._map.easeTo({pitch: 8, roll: 89.9, bearing:90.1});
+        };
+
+        let s = document.createElement('span');
+        s.innerHTML = '<br>'
+
+        this._container.appendChild(p1);
+        this._container.appendChild(p2);
+        this._container.appendChild(s);
+        this._container.appendChild(p3);
+        this._container.appendChild(p4);
+        return this._container;
+    }
+}
+
 
 map.addControl(new BearingControl());
 map.addControl(new PitchControl());
 map.addControl(new RollControl());
+map.addControl(new SingularPointControl());
 
     map.addControl(
         new maplibregl.NavigationControl({
