@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>3D Terrain</title>
+    <meta property="og:description" content="Go beyond hillshade and show elevation in actual 3D." />
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel='stylesheet' href='./maplibre-gl.css' />
+    <script src='./maplibre-gl.js'></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        html, body, #map { height: 100%; }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+    const map = (window.map = new maplibregl.Map({
+        container: 'map',
+        zoom: 12,
+        center: [11.39085, 47.27574],
+        pitch: 70,
+        hash: true,
+        style: {
+            version: 8,
+            sources: {
+                osm: {
+                    type: 'raster',
+                    tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '&copy; OpenStreetMap Contributors',
+                    maxzoom: 19
+                },
+                // Use a different source for terrain and hillshade layers, to improve render quality
+                terrainSource: {
+                    type: 'raster-dem',
+                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+                    tileSize: 256
+                },
+                hillshadeSource: {
+                    type: 'raster-dem',
+                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+                    tileSize: 256
+                }
+            },
+            layers: [
+                {
+                    id: 'osm',
+                    type: 'raster',
+                    source: 'osm'
+                },
+                {
+                    id: 'hills',
+                    type: 'hillshade',
+                    source: 'hillshadeSource',
+                    layout: {visibility: 'visible'},
+                    paint: {'hillshade-shadow-color': '#473B24'}
+                }
+            ],
+            terrain: {
+                source: 'terrainSource',
+                exaggeration: 1
+            },
+            sky: {}
+        },
+        maxZoom: 18,
+        maxPitch: 85
+    }));
+
+    
+class BearingControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let bearing_label = document.createElement('span');
+        bearing_label.innerHTML = "bearing = ";
+        let bearing_value = document.createElement('span');
+        bearing_value.innerHTML = map.getBearing();
+        let bearing_down = document.createElement('button');
+        bearing_down.innerHTML = "-";
+        bearing_down.onclick = (e) => {
+            this._map.easeTo({bearing: Math.round(this._map.getBearing() - 5)});
+            bearing_value.innerHTML = Math.round(this._map.getBearing());
+        };
+        let bearing_up = document.createElement('button');
+        bearing_up.innerHTML = "+";
+        bearing_up.onclick = (e) => {
+            this._map.easeTo({bearing: Math.round(this._map.getBearing() + 5)});
+            bearing_value.innerHTML = Math.round(this._map.getBearing());
+        };
+        this._container.appendChild(bearing_label);
+        this._container.appendChild(bearing_value);
+        this._container.appendChild(bearing_down);
+        this._container.appendChild(bearing_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+class PitchControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let pitch_label = document.createElement('span');
+        pitch_label.innerHTML = "pitch = ";
+        let pitch_value = document.createElement('span');
+        pitch_value.innerHTML = map.getPitch();
+        let pitch_down = document.createElement('button');
+        pitch_down.innerHTML = "-";
+        pitch_down.onclick = (e) => {
+            this._map.easeTo({pitch: Math.round(this._map.getRoll() - 5)});
+            pitch_value.innerHTML = Math.round(this._map.getPitch());
+        };
+        let pitch_up = document.createElement('button');
+        pitch_up.innerHTML = "+";
+        pitch_up.onclick = (e) => {
+            this._map.easeTo({pitch: Math.round(this._map.getPitch() + 5)});
+            pitch_value.innerHTML = Math.round(this._map.getPitch());
+        };
+        this._container.appendChild(pitch_label);
+        this._container.appendChild(pitch_value);
+        this._container.appendChild(pitch_down);
+        this._container.appendChild(pitch_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+class RollControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let roll_label = document.createElement('span');
+        roll_label.innerHTML = "roll = ";
+        let roll_value = document.createElement('span');
+        roll_value.innerHTML = map.getRoll();
+        let roll_down = document.createElement('button');
+        roll_down.innerHTML = "-";
+        roll_down.onclick = (e) => {
+            this._map.easeTo({roll: Math.round(this._map.getRoll() - 5)});
+            roll_value.innerHTML = Math.round(this._map.getRoll());
+        };
+        let roll_up = document.createElement('button');
+        roll_up.innerHTML = "+";
+        roll_up.onclick = (e) => {
+            this._map.easeTo({roll: Math.round(this._map.getRoll() + 5)});
+            roll_value.innerHTML = Math.round(this._map.getRoll());
+        };
+        this._container.appendChild(roll_label);
+        this._container.appendChild(roll_value);
+        this._container.appendChild(roll_down);
+        this._container.appendChild(roll_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+
+
+map.addControl(new BearingControl());
+map.addControl(new PitchControl());
+map.addControl(new RollControl());
+
+    map.addControl(
+        new maplibregl.NavigationControl({
+            visualizePitch: true,
+            showZoom: true,
+            showCompass: true
+        })
+    );
+
+    map.addControl(
+        new maplibregl.TerrainControl({
+            source: 'terrainSource',
+            exaggeration: 1
+        })
+    );
+</script>
+</body>
+</html>
