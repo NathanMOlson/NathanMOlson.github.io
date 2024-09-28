@@ -177,19 +177,19 @@ class SingularPointControl {
         let p1 = document.createElement('button');
         p1.innerHTML = "(-89.9,-89.9)";
         p1.onclick = (e) => {
-            this._map.easeTo({roll: -89.9, bearing:-89.9});
+            this._map.easeTo({pitch: 8, roll: -89.9, bearing:-89.9});
         };
 
         let p2 = document.createElement('button');
         p2.innerHTML = "(89.9,89.9)";
         p2.onclick = (e) => {
-            this._map.easeTo({pitch: 8,roll: 89.9, bearing:89.9});
+            this._map.easeTo({pitch: 8, roll: 89.9, bearing:89.9});
         };
 
         let p3 = document.createElement('button');
         p3.innerHTML = "(-89.9,-90.1)";
         p3.onclick = (e) => {
-            this._map.easeTo({pitch: 8,roll: -89.9, bearing:-90.1});
+            this._map.easeTo({pitch: 8, roll: -89.9, bearing:-90.1});
         };
 
         let p4 = document.createElement('button');
