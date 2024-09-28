@@ -23,45 +23,41 @@
         hash: true,
         style: {
             version: 8,
-            sources: {
-                osm: {
-                    type: 'raster',
-                    tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-                    tileSize: 256,
-                    attribution: '&copy; OpenStreetMap Contributors',
-                    maxzoom: 19
-                },
-                // Use a different source for terrain and hillshade layers, to improve render quality
-                terrainSource: {
-                    type: 'raster-dem',
-                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-                    tileSize: 256
-                },
-                hillshadeSource: {
-                    type: 'raster-dem',
-                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-                    tileSize: 256
-                }
+        sources: {
+            number: {
+                type: 'raster',
+                url: 'debug-tiles/number/tiles.json',
+                tileSize: 256
             },
-            layers: [
-                {
-                    id: 'osm',
-                    type: 'raster',
-                    source: 'osm'
-                },
-                {
-                    id: 'hills',
-                    type: 'hillshade',
-                    source: 'hillshadeSource',
-                    layout: {visibility: 'visible'},
-                    paint: {'hillshade-shadow-color': '#473B24'}
-                }
-            ],
-            terrain: {
-                source: 'terrainSource',
-                exaggeration: 1
+            terrainSource: {
+                type: 'raster-dem',
+                url: 'debug-tiles/terrain-ruffles/tiles.json',
+                tileSize: 256
             },
-            sky: {}
+            hillshadeSource: {
+                type: 'raster-dem',
+                url: 'debug-tiles/number-hillshade/tiles.json',
+                tileSize: 256
+            }
+        },
+        layers: [
+            {
+                id: 'number',
+                type: 'raster',
+                source: 'number'
+            },
+            {
+                id: 'hills',
+                type: 'hillshade',
+                source: 'hillshadeSource',
+                layout: {visibility: 'visible'},
+                paint: {'hillshade-shadow-color': '#473B24'}
+            }
+        ],
+        terrain: {
+            source: 'terrainSource',
+            exaggeration: 1
+        }
         },
         maxZoom: 18,
         maxPitch: 85
@@ -168,10 +164,52 @@ class RollControl {
     }
 }
 
+class SingularPointControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+
+        let p1 = document.createElement('button');
+        p1.innerHTML = "(-89.9,-89.9)";
+        p1.onclick = (e) => {
+            this._map.easeTo({roll: -89.9, bearing:-89.9});
+        };
+
+        let p2 = document.createElement('button');
+        p2.innerHTML = "(89.9,89.9)";
+        p2.onclick = (e) => {
+            this._map.easeTo({pitch: 8,roll: 89.9, bearing:89.9});
+        };
+
+        let p3 = document.createElement('button');
+        p3.innerHTML = "(-89.9,-90.1)";
+        p3.onclick = (e) => {
+            this._map.easeTo({pitch: 8,roll: -89.9, bearing:-90.1});
+        };
+
+        let p4 = document.createElement('button');
+        p4.innerHTML = "(89.9,90.1)";
+        p4.onclick = (e) => {
+            this._map.easeTo({pitch: 8, roll: 89.9, bearing:90.1});
+        };
+
+        let s = document.createElement('span');
+        s.innerHTML = '<br>'
+
+        this._container.appendChild(p1);
+        this._container.appendChild(p2);
+        this._container.appendChild(s);
+        this._container.appendChild(p3);
+        this._container.appendChild(p4);
+        return this._container;
+    }
+}
 
 map.addControl(new BearingControl());
 map.addControl(new PitchControl());
 map.addControl(new RollControl());
+map.addControl(new SingularPointControl());
 
     map.addControl(
         new maplibregl.NavigationControl({
