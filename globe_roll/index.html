@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Globe Roll</title>
+  <meta property="og:description" content="Demonstrate camera roll with globe projection." />
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <script src='../camera_roll/maplibre-gl.js'></script>
+  <link href='../camera_roll/maplibre-gl.css' rel='stylesheet' />
+  <style>
+    #map {position: absolute; top: 0; right: 0; bottom: 0; left: 0;}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>      
+class BearingControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let bearing_label = document.createElement('span');
+        bearing_label.innerHTML = "bearing = ";
+        let bearing_value = document.createElement('span');
+        bearing_value.innerHTML = map.getBearing();
+        let bearing_down = document.createElement('button');
+        bearing_down.innerHTML = "-";
+        bearing_down.onclick = (e) => {
+            this._map.easeTo({bearing: Math.round(this._map.getBearing() - 5)});
+            bearing_value.innerHTML = Math.round(this._map.getBearing());
+        };
+        let bearing_up = document.createElement('button');
+        bearing_up.innerHTML = "+";
+        bearing_up.onclick = (e) => {
+            this._map.easeTo({bearing: Math.round(this._map.getBearing() + 5)});
+            bearing_value.innerHTML = Math.round(this._map.getBearing());
+        };
+        this._container.appendChild(bearing_label);
+        this._container.appendChild(bearing_value);
+        this._container.appendChild(bearing_down);
+        this._container.appendChild(bearing_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+class PitchControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let pitch_label = document.createElement('span');
+        pitch_label.innerHTML = "pitch = ";
+        let pitch_value = document.createElement('span');
+        pitch_value.innerHTML = map.getPitch();
+        let pitch_down = document.createElement('button');
+        pitch_down.innerHTML = "-";
+        pitch_down.onclick = (e) => {
+            this._map.easeTo({pitch: Math.round(this._map.getPitch() - 5)});
+            pitch_value.innerHTML = Math.round(this._map.getPitch());
+        };
+        let pitch_up = document.createElement('button');
+        pitch_up.innerHTML = "+";
+        pitch_up.onclick = (e) => {
+            this._map.easeTo({pitch: Math.round(this._map.getPitch() + 5)});
+            pitch_value.innerHTML = Math.round(this._map.getPitch());
+        };
+        this._container.appendChild(pitch_label);
+        this._container.appendChild(pitch_value);
+        this._container.appendChild(pitch_down);
+        this._container.appendChild(pitch_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+class RollControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let roll_label = document.createElement('span');
+        roll_label.innerHTML = "roll = ";
+        let roll_value = document.createElement('span');
+        roll_value.innerHTML = map.getRoll();
+        let roll_down = document.createElement('button');
+        roll_down.innerHTML = "-";
+        roll_down.onclick = (e) => {
+            this._map.easeTo({roll: Math.round(this._map.getRoll() - 5)});
+            roll_value.innerHTML = Math.round(this._map.getRoll());
+
+this._map.setSky({
+            'sky-color': '#00f',
+            'horizon-color': '#f00',
+            'fog-color': '#0f0'
+        });
+        };
+        let roll_up = document.createElement('button');
+        roll_up.innerHTML = "+";
+        roll_up.onclick = (e) => {
+            this._map.easeTo({roll: Math.round(this._map.getRoll() + 5)});
+            roll_value.innerHTML = Math.round(this._map.getRoll());
+        };
+        this._container.appendChild(roll_label);
+        this._container.appendChild(roll_value);
+        this._container.appendChild(roll_down);
+        this._container.appendChild(roll_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+
+    fetch("https://demotiles.maplibre.org/style.json")
+      .then(response => response.json())
+      .then(fetchedStyle => {
+        fetchedStyle["projection"] = { "type": "globe" };
+        var map = new maplibregl.Map({
+          container: 'map',
+          style: fetchedStyle,
+          center: [0.0, 0.0],
+          zoom: 3.0
+        });
+        map.addControl(new BearingControl());
+        map.addControl(new PitchControl());
+        map.addControl(new RollControl());
+      });
+
+  </script>
+</body>
+</html>
