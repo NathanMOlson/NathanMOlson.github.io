@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>CamCentric</title>
+    <meta property="og:description" content="Camera-centric demo." />
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel='stylesheet' href='./maplibre-gl.css' />
+    <script src='./maplibre-gl.js'></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        html, body, #map { height: 100%; }
+    </style>
+</head>
+<body>
+<div id="map">
+    <div id="key-display" style="position: fixed; top: 10px; left: 10px; background-color: rgba(0, 0, 0, 0.25); padding: 5px; border-radius: 5px; z-index: 1000;">
+        <div>
+            <button id="lat-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="lat-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Latitude: </span>
+            <span id="lat-value"></span>
+        </div>
+        <div>
+            <button id="lng-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="lng-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Longitude: </span>
+            <span id="lng-value"></span>
+        </div>
+        <div>
+            <button id="alt-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="alt-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Altitude: </span>
+            <span id="alt-value"></span>
+        </div>
+        <div>
+            <button id="roll-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="roll-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Roll: </span>
+            <span id="roll-value"></span>
+        </div>
+        <div>
+            <button id="pitch-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="pitch-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Pitch: </span>
+            <span id="pitch-value"></span>
+        </div>
+        <div>
+            <button id="bearing-down" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">-</button>
+            <button id="bearing-up" style="width: 32px; height: 32px; margin: 2px; border: none; border-radius: 3px;">+</button>
+            <span>Bearing: </span>
+            <span id="bearing-value"></span>
+        </div>
+    </div>
+</div>
+<script>
+    const map = (window.map = new maplibregl.Map({
+        container: 'map',
+        hash: true,
+        style: {
+            version: 8,
+            sources: {
+                osm: {
+                    type: 'raster',
+                    tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    attribution: '&copy; OpenStreetMap Contributors',
+                    maxzoom: 19
+                },
+                // Use a different source for terrain and hillshade layers, to improve render quality
+                terrainSource: {
+                    type: 'raster-dem',
+                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+                    tileSize: 256
+                },
+                hillshadeSource: {
+                    type: 'raster-dem',
+                    url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+                    tileSize: 256
+                }
+            },
+            layers: [
+                {
+                    id: 'osm',
+                    type: 'raster',
+                    source: 'osm'
+                },
+                {
+                    id: 'hills',
+                    type: 'hillshade',
+                    source: 'hillshadeSource',
+                    layout: { visibility: 'visible' },
+                    paint: { 'hillshade-shadow-color': '#473B24' }
+                }
+            ],
+        terrain: {
+            source: 'terrainSource',
+            exaggeration: 1
+        },
+        sky: {}
+        },
+        maxZoom: 18,
+        maxPitch: 180
+    }));
+
+
+updateDisplay = (options) => {
+    document.getElementById('lat-value').innerHTML = options.camLngLat.lat.toFixed(5);
+    document.getElementById('lng-value').innerHTML = options.camLngLat.lng.toFixed(5);
+    document.getElementById('alt-value').innerHTML = options.camAlt;
+    document.getElementById('roll-value').innerHTML = options.roll;
+    document.getElementById('pitch-value').innerHTML = options.pitch;
+    document.getElementById('bearing-value').innerHTML = options.bearing;
+}
+
+let jumpToLLAOptions = {camLngLat: {lng: 11.39, lat: 47.27}, camAlt: 3000, roll: 0, pitch: 85, bearing: 0};
+map.jumpToLLA(jumpToLLAOptions);
+updateDisplay(jumpToLLAOptions);
+
+document.getElementById('lat-down').onclick = (e) => {
+    jumpToLLAOptions.camLngLat.lat -= 0.0005;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('lat-up').onclick = (e) => {
+    jumpToLLAOptions.camLngLat.lat += 0.0005;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+document.getElementById('lng-down').onclick = (e) => {
+    jumpToLLAOptions.camLngLat.lng -= 0.0005;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('lng-up').onclick = (e) => {
+    jumpToLLAOptions.camLngLat.lng += 0.0005;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+document.getElementById('alt-down').onclick = (e) => {
+    jumpToLLAOptions.camAlt -= 10;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('alt-up').onclick = (e) => {
+    jumpToLLAOptions.camAlt += 10;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+document.getElementById('roll-down').onclick = (e) => {
+    jumpToLLAOptions.roll -= 5;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('roll-up').onclick = (e) => {
+    jumpToLLAOptions.roll += 5;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+document.getElementById('pitch-down').onclick = (e) => {
+    jumpToLLAOptions.pitch -= 2;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('pitch-up').onclick = (e) => {
+    jumpToLLAOptions.pitch += 2;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+document.getElementById('bearing-down').onclick = (e) => {
+    jumpToLLAOptions.bearing -= 3;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+document.getElementById('bearing-up').onclick = (e) => {
+    jumpToLLAOptions.bearing += 3;
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+};
+
+    map.addControl(
+        new maplibregl.NavigationControl({
+            visualizePitch: true,
+            showZoom: true,
+            showCompass: true
+        })
+    );
+
+    map.addControl(
+        new maplibregl.TerrainControl({
+            source: 'terrainSource',
+            exaggeration: 1
+        })
+    );
+</script>
+</body>
+</html>
