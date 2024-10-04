@@ -114,8 +114,10 @@ updateDisplay = (options) => {
 }
 
 let jumpToLLAOptions = {camLngLat: {lng: 11.39, lat: 47.27}, camAlt: 3000, roll: 0, pitch: 85, bearing: 0};
-map.jumpToLLA(jumpToLLAOptions);
-updateDisplay(jumpToLLAOptions);
+map.on('load', () => {
+    map.jumpToLLA(jumpToLLAOptions);
+    updateDisplay(jumpToLLAOptions);
+});
 
 document.getElementById('lat-down').onclick = (e) => {
     jumpToLLAOptions.camLngLat.lat -= 0.0005;
