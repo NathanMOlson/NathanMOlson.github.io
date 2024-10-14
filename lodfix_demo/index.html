@@ -64,26 +64,60 @@ var map = window.map = new maplibregl.Map({
     maxPitch: 85
 });
 
-class PitchBehaviorControl {
+class PitchTileLoadingBehaviorControl {
     onAdd(map) {
         this._map = map;
         this._container = document.createElement('div');
         this._container.className = 'maplibregl-ctrl';
         let pb_label = document.createElement('span');
-        pb_label.innerHTML = "pitchBehavior = ";
+        pb_label.innerHTML = "pitchTileLoadingBehavior = ";
         let pb_value = document.createElement('span');
         pb_value.innerHTML = "1";
         let pb_down = document.createElement('button');
         pb_down.innerHTML = "-";
         pb_down.onclick = (e) => {
-            this._map.setPitchBehavior(this._map.getPitchBehavior() - 0.5);
-            pb_value.innerHTML = this._map.getPitchBehavior();
+            this._map.setPitchTileLoadingBehavior(this._map.getPitchTileLoadingBehavior() - 0.5);
+            pb_value.innerHTML = this._map.getPitchTileLoadingBehavior();
         };
         let pb_up = document.createElement('button');
         pb_up.innerHTML = "+";
         pb_up.onclick = (e) => {
-            this._map.setPitchBehavior(this._map.getPitchBehavior() + 0.5);
-            pb_value.innerHTML = this._map.getPitchBehavior();
+            this._map.setPitchTileLoadingBehavior(this._map.getPitchTileLoadingBehavior() + 0.5);
+            pb_value.innerHTML = this._map.getPitchTileLoadingBehavior();
+        };
+        this._container.appendChild(pb_label);
+        this._container.appendChild(pb_value);
+        this._container.appendChild(pb_down);
+        this._container.appendChild(pb_up);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+
+class TileZoomDeadbandControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let pb_label = document.createElement('span');
+        pb_label.innerHTML = "tileZoomDeadband = ";
+        let pb_value = document.createElement('span');
+        pb_value.innerHTML = "1";
+        let pb_down = document.createElement('button');
+        pb_down.innerHTML = "-";
+        pb_down.onclick = (e) => {
+            this._map.setTileZoomDeadband(this._map.getTileZoomDeadband() - 0.1);
+            pb_value.innerHTML = this._map.getTileZoomDeadband();
+        };
+        let pb_up = document.createElement('button');
+        pb_up.innerHTML = "+";
+        pb_up.onclick = (e) => {
+            this._map.setTileZoomDeadband(this._map.getTileZoomDeadband() + 0.1);
+            pb_value.innerHTML = this._map.getTileZoomDeadband();
         };
         this._container.appendChild(pb_label);
         this._container.appendChild(pb_value);
@@ -132,7 +166,8 @@ class PitchControl {
     }
 }
 
-map.addControl(new PitchBehaviorControl());
+map.addControl(new PitchTileLoadingBehaviorControl());
+map.addControl(new TileZoomDeadbandControl());
 map.addControl(new PitchControl());
 
 map.addControl(
