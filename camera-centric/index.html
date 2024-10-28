@@ -100,7 +100,8 @@
         sky: {}
         },
         maxZoom: 18,
-        maxPitch: 180
+        maxPitch: 180,
+        centerClampedToGround: false
     }));
 
 
@@ -113,75 +114,79 @@ updateDisplay = (options) => {
     document.getElementById('bearing-value').innerHTML = options.bearing;
 }
 
+const jumpToLLA = (map, options) => {
+    map.jumpTo(map.calculateCameraOptionsFromCameraLngLatAltRotation(options.camLngLat, options.camAlt, options.bearing, options.pitch, options.roll));
+}
+
 let jumpToLLAOptions = {camLngLat: {lng: 11.39, lat: 47.27}, camAlt: 3000, roll: 0, pitch: 85, bearing: 0};
 map.on('load', () => {
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 });
 
 document.getElementById('lat-down').onclick = (e) => {
     jumpToLLAOptions.camLngLat.lat -= 0.0005;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('lat-up').onclick = (e) => {
     jumpToLLAOptions.camLngLat.lat += 0.0005;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
 document.getElementById('lng-down').onclick = (e) => {
     jumpToLLAOptions.camLngLat.lng -= 0.0005;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('lng-up').onclick = (e) => {
     jumpToLLAOptions.camLngLat.lng += 0.0005;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
 document.getElementById('alt-down').onclick = (e) => {
     jumpToLLAOptions.camAlt -= 10;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('alt-up').onclick = (e) => {
     jumpToLLAOptions.camAlt += 10;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
 document.getElementById('roll-down').onclick = (e) => {
     jumpToLLAOptions.roll -= 5;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('roll-up').onclick = (e) => {
     jumpToLLAOptions.roll += 5;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
 document.getElementById('pitch-down').onclick = (e) => {
     jumpToLLAOptions.pitch -= 2;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('pitch-up').onclick = (e) => {
     jumpToLLAOptions.pitch += 2;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
 document.getElementById('bearing-down').onclick = (e) => {
     jumpToLLAOptions.bearing -= 3;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 document.getElementById('bearing-up').onclick = (e) => {
     jumpToLLAOptions.bearing += 3;
-    map.jumpToLLA(jumpToLLAOptions);
+    jumpToLLA(map, jumpToLLAOptions);
     updateDisplay(jumpToLLAOptions);
 };
 
