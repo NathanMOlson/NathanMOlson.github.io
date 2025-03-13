@@ -47,7 +47,7 @@ if (typeof window === 'undefined') {
                         newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
                     }
                     newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
-                    newHeaders.set("Cache-Control", "public, max-age=10");
+                    newHeaders.set("Cache-Control", "public, max-age=3");
 
                     return new Response(response.body, {
                         status: response.status,
