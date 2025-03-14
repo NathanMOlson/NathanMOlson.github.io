@@ -38555,7 +38555,7 @@ var ImageRequest;
             }
             else if (response.data) {
                 const img = yield arrayBufferToCanvasImageSource(response.data);
-                onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires });
+                onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
             }
         }
         catch (err) {
