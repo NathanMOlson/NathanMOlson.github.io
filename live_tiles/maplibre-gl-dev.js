@@ -42261,7 +42261,7 @@ class Tile {
         if (data.cacheControl) {
             const parsedCC = performance$1.parseCacheControl(data.cacheControl);
             if (parsedCC['max-age'])
-                this.expirationTime = Date.now() + parsedCC['max-age'] * 1000;
+                this.expirationTime = Date.now() + 3000;
         }
         else if (data.expires) {
             this.expirationTime = new Date(data.expires).getTime();
