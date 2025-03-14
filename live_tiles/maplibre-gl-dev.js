@@ -38023,7 +38023,7 @@ var devDependencies = {
 	cssnano: "^7.0.6",
 	d3: "^7.9.0",
 	"d3-queue": "^3.0.7",
-	"devtools-protocol": "^0.0.1431913",
+	"devtools-protocol": "^0.0.1432532",
 	diff: "^7.0.0",
 	"dts-bundle-generator": "^9.5.1",
 	eslint: "^9.22.0",
@@ -38040,7 +38040,7 @@ var devDependencies = {
 	"junit-report-builder": "^5.1.1",
 	minimist: "^1.2.8",
 	"mock-geolocation": "^1.0.11",
-	"monocart-coverage-reports": "^2.12.2",
+	"monocart-coverage-reports": "^2.12.3",
 	nise: "^6.1.1",
 	"npm-font-open-sans": "^1.1.0",
 	"npm-run-all": "^4.1.5",
@@ -40738,7 +40738,7 @@ class RasterTileSource extends performance$1.Evented {
                     if (!requestParameters.headers) {
                         requestParameters.headers = {};
                     }
-                    requestParameters.headers["If-Modified-Since"] = tile.modificationTime;
+                    requestParameters.headers["If-Modified-Since"] = tile.modificationTime.toUTCString();
                 }
                 const response = yield ImageRequest.getImage(requestParameters, tile.abortController, this.map._refreshExpiredTiles);
                 delete tile.abortController;
@@ -42261,7 +42261,7 @@ class Tile {
         if (data.cacheControl) {
             const parsedCC = performance$1.parseCacheControl(data.cacheControl);
             if (parsedCC['max-age'])
-                this.expirationTime = Date.now() + 3000;
+                this.expirationTime = Date.now() + parsedCC['max-age'] * 1000;
         }
         else if (data.expires) {
             this.expirationTime = new Date(data.expires).getTime();
