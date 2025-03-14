@@ -9650,7 +9650,7 @@ function makeFetchRequest(requestParameters, abortController) {
             // access to the faulty url. In such case, we provide the arbitrary HTTP error code of `0`.
             throw new AJAXError(0, e.message, requestParameters.url, new Blob());
         }
-        if (!response.ok) {
+        if (!response.ok && response.status != 304) {
             const body = yield response.blob();
             throw new AJAXError(response.status, response.statusText, requestParameters.url, body);
         }
