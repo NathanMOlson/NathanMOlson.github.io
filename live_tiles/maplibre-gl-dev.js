@@ -38559,6 +38559,7 @@ var ImageRequest;
                     onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
                 }
                 else {
+                    onSuccess({ data: null, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
                 }
             }
         }
