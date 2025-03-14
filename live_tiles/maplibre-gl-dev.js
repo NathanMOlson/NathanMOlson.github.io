@@ -38553,9 +38553,13 @@ var ImageRequest;
                 // If HtmlImageElement is used to get image then response type will be HTMLImageElement
                 onSuccess(response);
             }
-            else if (response.data && response.data.byteLength > 0) {
-                const img = yield arrayBufferToCanvasImageSource(response.data);
-                onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
+            else if (response.data) {
+                if (response.data.byteLength > 0) {
+                    const img = yield arrayBufferToCanvasImageSource(response.data);
+                    onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
+                }
+                else {
+                }
             }
         }
         catch (err) {
@@ -40746,20 +40750,22 @@ class RasterTileSource extends performance$1.Evented {
                     tile.state = 'unloaded';
                     return;
                 }
-                if (response && response.data) {
+                if (response) {
                     if (this.map._refreshExpiredTiles && response.cacheControl && response.expires) {
                         tile.setExpiryData({ cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
                     }
-                    const context = this.map.painter.context;
-                    const gl = context.gl;
-                    const img = response.data;
-                    tile.texture = this.map.painter.getTileTexture(img.width);
-                    if (tile.texture) {
-                        tile.texture.update(img, { useMipmap: true });
-                    }
-                    else {
-                        tile.texture = new Texture(context, img, gl.RGBA, { useMipmap: true });
-                        tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE, gl.LINEAR_MIPMAP_NEAREST);
+                    if (response.data) {
+                        const context = this.map.painter.context;
+                        const gl = context.gl;
+                        const img = response.data;
+                        tile.texture = this.map.painter.getTileTexture(img.width);
+                        if (tile.texture) {
+                            tile.texture.update(img, { useMipmap: true });
+                        }
+                        else {
+                            tile.texture = new Texture(context, img, gl.RGBA, { useMipmap: true });
+                            tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE, gl.LINEAR_MIPMAP_NEAREST);
+                        }
                     }
                     tile.state = 'loaded';
                 }
