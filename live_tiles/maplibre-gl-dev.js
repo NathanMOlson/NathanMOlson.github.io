@@ -40735,6 +40735,9 @@ class RasterTileSource extends performance$1.Evented {
             try {
                 const requestParameters = this.map._requestManager.transformRequest(url, "Tile" /* ResourceType.Tile */);
                 if (tile.modificationTime) {
+                    if (!requestParameters.headers) {
+                        requestParameters.headers = {};
+                    }
                     requestParameters.headers.set('If-Modified-Since', tile.modificationTime);
                 }
                 const response = yield ImageRequest.getImage(requestParameters, tile.abortController, this.map._refreshExpiredTiles);
