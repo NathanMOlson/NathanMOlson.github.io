@@ -38553,7 +38553,7 @@ var ImageRequest;
                 // If HtmlImageElement is used to get image then response type will be HTMLImageElement
                 onSuccess(response);
             }
-            else if (response.data) {
+            else if (response.data && response.data.byteLength > 0) {
                 const img = yield arrayBufferToCanvasImageSource(response.data);
                 onSuccess({ data: img, cacheControl: response.cacheControl, expires: response.expires, lastModified: response.lastModified });
             }
