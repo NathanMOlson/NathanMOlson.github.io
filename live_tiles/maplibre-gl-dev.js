@@ -40738,7 +40738,7 @@ class RasterTileSource extends performance$1.Evented {
                     if (!requestParameters.headers) {
                         requestParameters.headers = {};
                     }
-                    requestParameters.headers["If-Modified-Since"] = tile.modificationTime.toUTCString();
+                    requestParameters.headers["If-Modified-Since"] = new Date(tile.modificationTime).toUTCString();
                 }
                 const response = yield ImageRequest.getImage(requestParameters, tile.abortController, this.map._refreshExpiredTiles);
                 delete tile.abortController;
