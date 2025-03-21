@@ -17,20 +17,26 @@
 <script>
 var map = window.map = new maplibregl.Map({
     container: 'map',
-    zoom: 10,
-    center: [0.0, 0.0],
+    zoom: 6,
+    center: [170, -42],
     pitch: 0,
     renderWorldCopies: false,
     hash: true,
     style: {
         version: 8,
         sources: {
+            satellite: {
+                type: 'raster',
+                tiles: ['https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp'],
+                tileSize: 256
+            },            
             number: {
                 type: 'raster',
                 url: 'https://demotiles.maplibre.org/debug-tiles/number/tiles.json',
                 tileSize: 256
             }
         },
+        
         layers: [
             {
                 id: 'number',
@@ -115,8 +121,42 @@ class TileZoomDeadbandControl {
     }
 }
 
+
+
+class SourceControl {
+    onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let pb_switch = document.createElement('button');
+        pb_switch.innerHTML = "Switch to Satellite";
+        pb_switch.onclick = (e) => {
+            if (pb_switch.innerHTML == "Switch to Satellite") {
+                pb_switch.innerHTML = "Switch to Numbers";
+                map.addLayer({'id': 'satellite','type': 'raster','source': 'satellite'});
+                map.removeLayer("number");
+                this._map._update();
+            } else {
+                pb_switch.innerHTML = "Switch to Satellite";
+                map.addLayer({'id': 'number','type': 'raster','source': 'number'});
+                map.removeLayer("satellite");
+                this._map._update();
+            }
+        };
+        this._container.appendChild(pb_switch);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+
 map.addControl(new TileZoomRateControl());
 map.addControl(new TileZoomDeadbandControl());
+map.addControl(new SourceControl());
+map.showTileBoundaries = true;
 
 map.addControl(
     new maplibregl.NavigationControl({
