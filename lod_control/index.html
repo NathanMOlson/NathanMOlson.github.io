@@ -34,7 +34,12 @@ var map = window.map = new maplibregl.Map({
                 type: 'raster',
                 url: 'https://demotiles.maplibre.org/debug-tiles/number/tiles.json',
                 tileSize: 256
-            }
+            },
+            terrainSource: {
+                type: 'raster-dem',
+                tiles: ['https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png?api=c01jp93wy1d0hjwwpeksyf0fntz&pipeline=terrain-rgb'],
+                tileSize: 256
+            },
         },
         
         layers: [
@@ -43,7 +48,11 @@ var map = window.map = new maplibregl.Map({
                 type: 'raster',
                 source: 'number'
             }
-        ]
+        ],
+        terrain: {
+            source: 'terrainSource',
+            exaggeration: 1
+        }
     },
     maxZoom: 18,
     maxPitch: 85
@@ -163,6 +172,12 @@ map.addControl(
         visualizePitch: true,
         showZoom: true,
         showCompass: true
+    })
+);
+map.addControl(
+    new maplibregl.TerrainControl({
+        source: 'terrainSource',
+        exaggeration: 1
     })
 );
 
