@@ -12788,6 +12788,18 @@ var paint_hillshade = {
 			]
 		},
 		"property-type": "data-constant"
+	},
+	"color-relief": {
+		type: "color",
+		"default": "#00000000",
+		transition: false,
+		expression: {
+			interpolated: true,
+			parameters: [
+				"elevation"
+			]
+		},
+		"property-type": "color-ramp"
 	}
 };
 var paint_background = {
@@ -13745,6 +13757,15 @@ function hslToRgb([h, s, l, alpha]) {
     return [f(0), f(8), f(4), alpha];
 }
 
+// polyfill for Object.hasOwn
+const hasOwnProperty = Object.hasOwn ||
+    function hasOwnProperty(object, key) {
+        return Object.prototype.hasOwnProperty.call(object, key);
+    };
+function getOwn(object, key) {
+    return hasOwnProperty(object, key) ? object[key] : undefined;
+}
+
 /**
  * CSS color parser compliant with CSS Color 4 Specification.
  * Supports: named colors, `transparent` keyword, all rgb hex notations,
@@ -13780,7 +13801,7 @@ function parseCssColor(input) {
         return [0, 0, 0, 0];
     }
     // 'white', 'black', 'blue'
-    const namedColorsMatch = namedColors[input];
+    const namedColorsMatch = getOwn(namedColors, input);
     if (namedColorsMatch) {
         const [r, g, b] = namedColorsMatch;
         return [r / 255, g / 255, b / 255, 1];
@@ -14229,7 +14250,7 @@ class Color {
                 }
                 const [r, g, b, alpha] = hclToRgb([
                     hue,
-                    chroma !== null && chroma !== undefined ? chroma : interpolateNumber(chroma0, chroma1, t),
+                    chroma !== null && chroma !== void 0 ? chroma : interpolateNumber(chroma0, chroma1, t),
                     interpolateNumber(light0, light1, t),
                     interpolateNumber(alphaF, alphaT, t),
                 ]);
@@ -14364,10 +14385,10 @@ class Padding {
     }
 }
 
-class RuntimeError {
+class RuntimeError extends Error {
     constructor(message) {
-        this.name = 'ExpressionEvaluationError';
-        this.message = message;
+        super(message);
+        this.name = 'RuntimeError';
     }
     toJSON() {
         return this.message;
@@ -14830,7 +14851,7 @@ class EvaluationContext {
         this.feature = null;
         this.featureState = null;
         this.formattedSection = null;
-        this._parseColorCache = {};
+        this._parseColorCache = new Map();
         this.availableImages = null;
         this.canonical = null;
     }
@@ -14850,9 +14871,10 @@ class EvaluationContext {
         return this.feature && this.feature.properties || {};
     }
     parseColor(input) {
-        let cached = this._parseColorCache[input];
+        let cached = this._parseColorCache.get(input);
         if (!cached) {
-            cached = this._parseColorCache[input] = Color.parse(input);
+            cached = Color.parse(input);
+            this._parseColorCache.set(input, cached);
         }
         return cached;
     }
@@ -17693,6 +17715,11 @@ CompoundExpression.register(expressions$1, {
         [],
         (ctx) => ctx.globals.heatmapDensity || 0
     ],
+    'elevation': [
+        NumberType,
+        [],
+        (ctx) => ctx.globals.elevation || 0
+    ],
     'line-progress': [
         NumberType,
         [],
@@ -18096,7 +18123,7 @@ function isExpressionConstant(expression) {
         return false;
     }
     return isFeatureConstant(expression) &&
-        isGlobalPropertyConstant(expression, ['zoom', 'heatmap-density', 'line-progress', 'accumulated', 'is-supported-script']);
+        isGlobalPropertyConstant(expression, ['zoom', 'heatmap-density', 'elevation', 'line-progress', 'accumulated', 'is-supported-script']);
 }
 function isFeatureConstant(e) {
     if (e instanceof CompoundExpression) {
@@ -19503,12 +19530,13 @@ function validateObject(options) {
     }
     for (const objectKey in object) {
         const elementSpecKey = objectKey.split('.')[0]; // treat 'paint.*' as 'paint'
-        const elementSpec = elementSpecs[elementSpecKey] || elementSpecs['*'];
+        // objectKey comes from the user controlled style input, so elementSpecKey may be e.g. "__proto__"
+        const elementSpec = getOwn(elementSpecs, elementSpecKey) || elementSpecs['*'];
         let validateElement;
-        if (elementValidators[elementSpecKey]) {
+        if (getOwn(elementValidators, elementSpecKey)) {
             validateElement = elementValidators[elementSpecKey];
         }
-        else if (elementSpecs[elementSpecKey]) {
+        else if (getOwn(elementSpecs, elementSpecKey)) {
             validateElement = validateSpec;
         }
         else if (elementValidators['*']) {
@@ -19714,7 +19742,6 @@ function validateFunction(options) {
             errors = errors.concat(validateStopDomainValue({
                 key: `${key}[0]`,
                 value: value[0],
-                valueSpec: {},
                 validateSpec: options.validateSpec,
                 style: options.style,
                 styleSpec: options.styleSpec
@@ -20011,6 +20038,9 @@ function validateLayer(options) {
     const key = options.key;
     const style = options.style;
     const styleSpec = options.styleSpec;
+    if (getType(layer) !== 'object') {
+        return [new ValidationError(key, layer, `object expected, ${getType(layer)} found`)];
+    }
     if (!layer.type && !layer.ref) {
         errors.push(new ValidationError(key, layer, 'either "type" or "ref" is required'));
     }
@@ -20150,7 +20180,7 @@ function validateString(options) {
 
 function validateRasterDEMSource(options) {
     var _a;
-    const sourceName = (_a = options.sourceName) !== null && _a !== undefined ? _a : '';
+    const sourceName = (_a = options.sourceName) !== null && _a !== void 0 ? _a : '';
     const rasterDEM = options.value;
     const styleSpec = options.styleSpec;
     const rasterDEMSpec = styleSpec.source_raster_dem;
@@ -20242,13 +20272,11 @@ function validateSource$1(options) {
                     errors.push(...validateExpression({
                         key: `${key}.${prop}.map`,
                         value: mapExpr,
-                        validateSpec,
                         expressionContext: 'cluster-map'
                     }));
                     errors.push(...validateExpression({
                         key: `${key}.${prop}.reduce`,
                         value: reduceExpr,
-                        validateSpec,
                         expressionContext: 'cluster-reduce'
                     }));
                 }
@@ -20278,11 +20306,7 @@ function validateSource$1(options) {
             return validateEnum({
                 key: `${key}.type`,
                 value: value.type,
-                valueSpec: { values: ['vector', 'raster', 'raster-dem', 'geojson', 'video', 'image'] },
-                style,
-                validateSpec,
-                styleSpec
-            });
+                valueSpec: { values: ['vector', 'raster', 'raster-dem', 'geojson', 'video', 'image'] }});
     }
 }
 function validatePromoteId({ key, value }) {
@@ -20689,11 +20713,7 @@ function validateStyleMin(style, styleSpec = v8Spec) {
     if (style['constants']) {
         errors = errors.concat(validateConstants({
             key: 'constants',
-            value: style['constants'],
-            style,
-            styleSpec,
-            validateSpec: validate,
-        }));
+            value: style['constants']}));
     }
     return sortErrors(errors);
 }
@@ -25865,6 +25885,7 @@ const getPaint$6 = () => paint$6 = paint$6 || new Properties({
     "hillshade-shadow-color": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-shadow-color"]),
     "hillshade-highlight-color": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-highlight-color"]),
     "hillshade-accent-color": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-accent-color"]),
+    "color-relief": new ColorRampProperty(v8Spec["paint_hillshade"]["color-relief"]),
 });
 var properties$6 = ({ get paint() { return getPaint$6(); } });
 
@@ -25872,9 +25893,28 @@ const isHillshadeStyleLayer = (layer) => layer.type === 'hillshade';
 class HillshadeStyleLayer extends StyleLayer {
     constructor(layer) {
         super(layer, properties$6);
+        this._updateColorRamp();
+    }
+    _updateColorRamp() {
+        const expression = this._transitionablePaint._values['color-relief'].value.expression;
+        if (expression instanceof ZoomConstantExpression && expression._styleExpression.expression instanceof Interpolate) {
+            const interpolater = expression._styleExpression.expression;
+            this.elevationRange = { start: interpolater.labels[0], end: interpolater.labels[interpolater.labels.length - 1] };
+            this.colorRamp = renderColorRamp({
+                expression,
+                evaluationKey: 'elevation',
+                image: this.colorRamp,
+                clips: [this.elevationRange]
+            });
+        }
+        else {
+            this.elevationRange = { start: 0, end: 1 };
+            this.colorRamp = null;
+        }
+        this.colorRampTexture = null;
     }
     hasOffscreenPass() {
-        return this.paint.get('hillshade-exaggeration') !== 0 && this.visibility !== 'none';
+        return this.visibility !== 'none' && (this.paint.get('hillshade-exaggeration') !== 0 || !!this.colorRamp);
     }
 }
 
@@ -46585,13 +46625,13 @@ var fillExtrusionPatternFrag = 'uniform vec2 u_texsize;uniform float u_fade;unif
 var fillExtrusionPatternVert = 'uniform vec2 u_pixel_coord_upper;uniform vec2 u_pixel_coord_lower;uniform float u_height_factor;uniform vec3 u_scale;uniform float u_vertical_gradient;uniform lowp float u_opacity;uniform vec2 u_fill_translate;uniform vec3 u_lightcolor;uniform lowp vec3 u_lightpos;uniform lowp vec3 u_lightpos_globe;uniform lowp float u_lightintensity;in vec2 a_pos;in vec4 a_normal_ed;\n#ifdef TERRAIN3D\nin vec2 a_centroid;\n#endif\n#ifdef GLOBE\nout vec3 v_sphere_pos;\n#endif\nout vec2 v_pos_a;out vec2 v_pos_b;out vec4 v_lighting;\n#pragma mapbox: define lowp float base\n#pragma mapbox: define lowp float height\n#pragma mapbox: define lowp vec4 pattern_from\n#pragma mapbox: define lowp vec4 pattern_to\n#pragma mapbox: define lowp float pixel_ratio_from\n#pragma mapbox: define lowp float pixel_ratio_to\nvoid main() {\n#pragma mapbox: initialize lowp float base\n#pragma mapbox: initialize lowp float height\n#pragma mapbox: initialize mediump vec4 pattern_from\n#pragma mapbox: initialize mediump vec4 pattern_to\n#pragma mapbox: initialize lowp float pixel_ratio_from\n#pragma mapbox: initialize lowp float pixel_ratio_to\nvec2 pattern_tl_a=pattern_from.xy;vec2 pattern_br_a=pattern_from.zw;vec2 pattern_tl_b=pattern_to.xy;vec2 pattern_br_b=pattern_to.zw;float tileRatio=u_scale.x;float fromScale=u_scale.y;float toScale=u_scale.z;vec3 normal=a_normal_ed.xyz;float edgedistance=a_normal_ed.w;vec2 display_size_a=(pattern_br_a-pattern_tl_a)/pixel_ratio_from;vec2 display_size_b=(pattern_br_b-pattern_tl_b)/pixel_ratio_to;\n#ifdef TERRAIN3D\nfloat height_terrain3d_offset=get_elevation(a_centroid);float base_terrain3d_offset=height_terrain3d_offset-(base > 0.0 ? 0.0 : 10.0);\n#else\nfloat height_terrain3d_offset=0.0;float base_terrain3d_offset=0.0;\n#endif\nbase=max(0.0,base)+base_terrain3d_offset;height=max(0.0,height)+height_terrain3d_offset;float t=mod(normal.x,2.0);float elevation=t > 0.0 ? height : base;vec2 posInTile=a_pos+u_fill_translate;\n#ifdef GLOBE\nvec3 spherePos=projectToSphere(posInTile,a_pos);vec3 elevatedPos=spherePos*(1.0+elevation/GLOBE_RADIUS);v_sphere_pos=elevatedPos;gl_Position=interpolateProjectionFor3D(posInTile,spherePos,elevation);\n#else\ngl_Position=u_projection_matrix*vec4(posInTile,elevation,1.0);\n#endif\nvec2 pos=normal.x==1.0 && normal.y==0.0 && normal.z==16384.0\n? a_pos\n: vec2(edgedistance,elevation*u_height_factor);v_pos_a=get_pattern_pos(u_pixel_coord_upper,u_pixel_coord_lower,fromScale*display_size_a,tileRatio,pos);v_pos_b=get_pattern_pos(u_pixel_coord_upper,u_pixel_coord_lower,toScale*display_size_b,tileRatio,pos);v_lighting=vec4(0.0,0.0,0.0,1.0);float directional=clamp(dot(normal/16383.0,u_lightpos),0.0,1.0);directional=mix((1.0-u_lightintensity),max((0.5+u_lightintensity),1.0),directional);if (normal.y !=0.0) {directional*=((1.0-u_vertical_gradient)+(u_vertical_gradient*clamp((t+base)*pow(height/150.0,0.5),mix(0.7,0.98,1.0-u_lightintensity),1.0)));}v_lighting.rgb+=clamp(directional*u_lightcolor,mix(vec3(0.0),vec3(0.3),1.0-u_lightcolor),vec3(1.0));v_lighting*=u_opacity;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nuniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_dimension;uniform float u_zoom;uniform vec4 u_unpack;uniform float u_colormap_scale;uniform float u_elevation_start;float getElevation(vec2 coord,float bias) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack)/4.0;}void main() {vec2 epsilon=1.0/u_dimension;float a=getElevation(v_pos+vec2(-epsilon.x,-epsilon.y),0.0);float b=getElevation(v_pos+vec2(0,-epsilon.y),0.0);float c=getElevation(v_pos+vec2(epsilon.x,-epsilon.y),0.0);float d=getElevation(v_pos+vec2(-epsilon.x,0),0.0);float e=getElevation(v_pos,0.0);float f=getElevation(v_pos+vec2(epsilon.x,0),0.0);float g=getElevation(v_pos+vec2(-epsilon.x,epsilon.y),0.0);float h=getElevation(v_pos+vec2(0,epsilon.y),0.0);float i=getElevation(v_pos+vec2(epsilon.x,epsilon.y),0.0);float exaggerationFactor=u_zoom < 2.0 ? 0.4 : u_zoom < 4.5 ? 0.35 : 0.3;float exaggeration=u_zoom < 15.0 ? (u_zoom-15.0)*exaggerationFactor : 0.0;vec2 deriv=vec2((c+f+f+i)-(a+d+d+g),(g+h+h+i)-(a+b+b+c))/pow(2.0,exaggeration+(19.2562-u_zoom));fragColor=clamp(vec4(deriv.x/2.0+0.5,deriv.y/2.0+0.5,(e-u_elevation_start)*u_colormap_scale,1.0),0.0,1.0);\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nuniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_dimension;uniform float u_zoom;uniform vec4 u_unpack;uniform float u_colormap_scale;uniform float u_elevation_start;float getElevation(vec2 coord,float bias) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack)/4.0;}void main() {vec2 epsilon=1.0/u_dimension;float a=getElevation(v_pos+vec2(-epsilon.x,-epsilon.y),0.0);float b=getElevation(v_pos+vec2(0,-epsilon.y),0.0);float c=getElevation(v_pos+vec2(epsilon.x,-epsilon.y),0.0);float d=getElevation(v_pos+vec2(-epsilon.x,0),0.0);float e=getElevation(v_pos,0.0);float f=getElevation(v_pos+vec2(epsilon.x,0),0.0);float g=getElevation(v_pos+vec2(-epsilon.x,epsilon.y),0.0);float h=getElevation(v_pos+vec2(0,epsilon.y),0.0);float i=getElevation(v_pos+vec2(epsilon.x,epsilon.y),0.0);float exaggerationFactor=u_zoom < 2.0 ? 0.4 : u_zoom < 4.5 ? 0.35 : 0.3;float exaggeration=u_zoom < 15.0 ? (u_zoom-15.0)*exaggerationFactor : 0.0;vec2 deriv=vec2((c+f+f+i)-(a+d+d+g),(g+h+h+i)-(a+b+b+c))/pow(2.0,exaggeration+(19.2562-u_zoom));fragColor=clamp(vec4(deriv.x/2.0+0.5,deriv.y/2.0+0.5,(e-u_elevation_start)*u_colormap_scale*4.0,1.0),0.0,1.0);\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadePrepareVert = 'uniform mat4 u_matrix;uniform vec2 u_dimension;in vec2 a_pos;in vec2 a_texture_pos;out vec2 v_pos;void main() {gl_Position=u_matrix*vec4(a_pos,0,1);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_texture_pos/8192.0)*scale+epsilon;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform sampler2D u_colormap;\n#define PI 3.141592653589793\nvoid main() {vec4 pixel=texture(u_image,v_pos);vec2 deriv=((pixel.rg*2.0)-1.0);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));float slope=atan(1.25*length(deriv)/scaleFactor);float aspect=deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);float intensity=u_light.x;float azimuth=u_light.y+PI;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;vec4 hypsometric=texture(u_colormap,vec2(pixel.b,0));fragColor=mix(hypsometric,fragColor,fragColor.a);\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform sampler2D u_colormap;uniform bool u_colormap_enabled;\n#define PI 3.141592653589793\nvoid main() {vec4 pixel=texture(u_image,v_pos);vec2 deriv=((pixel.rg*2.0)-1.0);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));float slope=atan(1.25*length(deriv)/scaleFactor);float aspect=deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);float intensity=u_light.x;float azimuth=u_light.y+PI;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;if(u_colormap_enabled){vec4 hypsometric=texture(u_colormap,vec2(pixel.b,0));fragColor=mix(hypsometric,fragColor,fragColor.a);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadeVert = 'uniform mat4 u_matrix;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);v_pos=a_pos/8192.0;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -53296,7 +53336,8 @@ const hillshadeUniforms = (context, locations) => ({
     'u_shadow': new performance$1.UniformColor(context, locations.u_shadow),
     'u_highlight': new performance$1.UniformColor(context, locations.u_highlight),
     'u_accent': new performance$1.UniformColor(context, locations.u_accent),
-    'u_colormap': new performance$1.Uniform1i(context, locations.u_colormap)
+    'u_colormap': new performance$1.Uniform1i(context, locations.u_colormap),
+    'u_colormap_enabled': new performance$1.Uniform1i(context, locations.u_colormap_enabled)
 });
 const hillshadePrepareUniforms = (context, locations) => ({
     'u_matrix': new performance$1.UniformMatrix4f(context, locations.u_matrix),
@@ -53323,10 +53364,11 @@ const hillshadeUniformValues = (painter, tile, layer) => {
         'u_shadow': shadow,
         'u_highlight': highlight,
         'u_accent': accent,
-        'u_colormap': 5
+        'u_colormap': 5,
+        'u_colormap_enabled': layer.colorRamp ? 1 : 0
     };
 };
-const hillshadeUniformPrepareValues = (tileID, dem, elevationColormap) => {
+const hillshadeUniformPrepareValues = (tileID, dem, elevationRange) => {
     const stride = dem.stride;
     const matrix = performance$1.create();
     // Flip rendering at y axis.
@@ -53338,8 +53380,8 @@ const hillshadeUniformPrepareValues = (tileID, dem, elevationColormap) => {
         'u_dimension': [stride, stride],
         'u_zoom': tileID.overscaledZ,
         'u_unpack': dem.getUnpackVector(),
-        'u_colormap_scale': elevationColormap.scale,
-        'u_elevation_start': elevationColormap.elevationStart
+        'u_colormap_scale': 1.0 / (elevationRange.end - elevationRange.start),
+        'u_elevation_start': elevationRange.start
     };
 };
 function getTileLatRange(painter, tileID) {
@@ -55193,7 +55235,7 @@ function renderHeatmapFlat(painter, layer) {
     context.activeTexture.set(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, fbo.colorAttachment.get());
     context.activeTexture.set(gl.TEXTURE1);
-    const colorRampTexture = getColorRampTexture(context, layer);
+    const colorRampTexture = getColorRampTexture$1(context, layer);
     colorRampTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
     painter.useProgram('heatmapTexture').draw(context, gl.TRIANGLES, DepthMode.disabled, StencilMode.disabled, painter.colorModeForRenderPass(), CullFaceMode.disabled, heatmapTextureUniformValues(painter, layer, 0, 1), null, null, layer.id, painter.viewportBuffer, painter.quadTriangleIndexBuffer, painter.viewportSegments, layer.paint, painter.transform.zoom);
 }
@@ -55226,7 +55268,7 @@ function renderHeatmapTerrain(painter, layer, coord, isRenderingToTexture, isRen
     const gl = context.gl;
     const transform = painter.transform;
     context.setColorMode(painter.colorModeForRenderPass());
-    const colorRampTexture = getColorRampTexture(context, layer);
+    const colorRampTexture = getColorRampTexture$1(context, layer);
     // Here we bind two different textures from which we'll sample in drawing
     // heatmaps: the kernel texture, prepared in the offscreen pass, and a
     // color ramp texture.
@@ -55277,7 +55319,7 @@ function createHeatmapFbo(context, width, height) {
     fbo.colorAttachment.set(texture);
     return fbo;
 }
-function getColorRampTexture(context, layer) {
+function getColorRampTexture$1(context, layer) {
     if (!layer.colorRampTexture) {
         layer.colorRampTexture = new Texture(context, layer.colorRamp, context.gl.RGBA);
     }
@@ -55615,30 +55657,6 @@ function drawHillshade(painter, sourceCache, layer, tileIDs, renderOptions) {
         }
     }
 }
-class ElevationColormap {
-    constructor(colormapSpec) {
-        const colormapSize = 256;
-        this.elevationStart = colormapSpec[0];
-        const elevationEnd = colormapSpec[colormapSpec.length - 2];
-        this.scale = 4.0 / (elevationEnd - this.elevationStart);
-        this.colormap = new Uint8Array(colormapSize * 4);
-        let elevationIndex = 0;
-        for (let i = 0; i < colormapSize; i++) {
-            const elevation = performance$1.lerp(this.elevationStart, elevationEnd, i / (colormapSize - 1));
-            while (elevationIndex < colormapSpec.length / 2 - 1 && colormapSpec[2 * elevationIndex + 2] < elevation) {
-                elevationIndex++;
-            }
-            const e1 = colormapSpec[2 * elevationIndex];
-            const c1 = colormapSpec[2 * elevationIndex + 1];
-            const e2 = colormapSpec[2 * elevationIndex + 2];
-            const c2 = colormapSpec[2 * elevationIndex + 3];
-            const mix = (elevation - e1) / (e2 - e1);
-            for (let j = 0; j < 4; j++) {
-                this.colormap[4 * i + j] = 255 * ((1 - mix) * c1.rgb[j] + mix * c2.rgb[j]);
-            }
-        }
-    }
-}
 function renderHillshade(painter, sourceCache, layer, coords, stencilModes, depthMode, colorMode, useBorder, isRenderingToTexture) {
     var _a;
     const projection = painter.style.projection;
@@ -55671,11 +55689,11 @@ function renderHillshade(painter, sourceCache, layer, coords, stencilModes, dept
 function prepareHillshade(painter, sourceCache, tileIDs, layer, depthMode, stencilMode, colorMode) {
     const context = painter.context;
     const gl = context.gl;
-    const colormapSpec = new Array(0, performance$1.Color.parse("#000088"), 10, performance$1.Color.parse("#00AA00"), 1500, performance$1.Color.parse("#884422"), 3000, performance$1.Color.parse("#FFFFFF"));
-    context.activeTexture.set(gl.TEXTURE5);
-    const elevationColormap = new ElevationColormap(colormapSpec);
-    const colormapTexture = new Texture(context, new performance$1.RGBAImage({ width: elevationColormap.colormap.length / 4, height: 1 }, elevationColormap.colormap), gl.RGBA);
-    colormapTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+    if (layer.colorRamp) {
+        const colorRampTexture = getColorRampTexture(context, layer);
+        context.activeTexture.set(gl.TEXTURE5);
+        colorRampTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+    }
     for (const coord of tileIDs) {
         const tile = sourceCache.getTile(coord);
         const dem = tile.dem;
@@ -55710,9 +55728,15 @@ function prepareHillshade(painter, sourceCache, tileIDs, layer, depthMode, stenc
         }
         context.bindFramebuffer.set(fbo.framebuffer);
         context.viewport.set([0, 0, tileSize, tileSize]);
-        painter.useProgram('hillshadePrepare').draw(context, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled, hillshadeUniformPrepareValues(tile.tileID, dem, elevationColormap), null, null, layer.id, painter.rasterBoundsBuffer, painter.quadTriangleIndexBuffer, painter.rasterBoundsSegments);
+        painter.useProgram('hillshadePrepare').draw(context, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled, hillshadeUniformPrepareValues(tile.tileID, dem, layer.elevationRange), null, null, layer.id, painter.rasterBoundsBuffer, painter.quadTriangleIndexBuffer, painter.rasterBoundsSegments);
         tile.needsHillshadePrepare = false;
     }
+}
+function getColorRampTexture(context, layer) {
+    if (!layer.colorRampTexture) {
+        layer.colorRampTexture = new Texture(context, layer.colorRamp, context.gl.RGBA);
+    }
+    return layer.colorRampTexture;
 }
 
 const cornerCoords = [

@@ -40,7 +40,16 @@ var map = window.map = new maplibregl.Map({
                 paint: {
                     'hillshade-shadow-color': '#00000000',
                     'hillshade-highlight-color': '#FFFFFF00',
-                    'hillshade-accent-color': '#00000000'
+                    'hillshade-accent-color': '#00000000',
+                    'color-relief': [
+                        "interpolate",
+                        ["linear"],
+                        ["elevation"],
+                        0,"#000088",
+                        10,"#00AA00",
+                        1500,"#884422",
+                        3000,"#FFFFFF"
+                    ]
                 }
             }
         ],
