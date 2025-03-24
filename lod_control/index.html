@@ -162,10 +162,43 @@ class SourceControl {
     }
 }
 
+
+class TileBoundariesControl {
+    onAdd(map) {
+        this._map = map;
+        map.showTileBoundaries = true;
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl';
+        let pb_label = document.createElement('span');
+        pb_label.innerHTML = "Tile Boundaries: ";
+        let pb_switch = document.createElement('button');
+        pb_switch.innerHTML = "Hide";
+        pb_switch.onclick = (e) => {
+            if (pb_switch.innerHTML == "Hide") {
+                pb_switch.innerHTML = "Show";
+                this._map.showTileBoundaries = false;
+                this._map._update();
+            } else {
+                pb_switch.innerHTML = "Hide";
+                this._map.showTileBoundaries = true;
+                this._map._update();
+            }
+        };
+        this._container.appendChild(pb_label);
+        this._container.appendChild(pb_switch);
+        return this._container;
+    }
+
+    onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+    }
+}
+
 map.addControl(new TileZoomRateControl());
 map.addControl(new TileZoomDeadbandControl());
 map.addControl(new SourceControl());
-map.showTileBoundaries = true;
+map.addControl(new TileBoundariesControl());
 
 map.addControl(
     new maplibregl.NavigationControl({
