@@ -70,14 +70,14 @@ class TileZoomRateControl {
         let pb_down = document.createElement('button');
         pb_down.innerHTML = "-";
         pb_down.onclick = (e) => {
-            window.TILE_ZOOM_RATE -= 0.5;
+            window.TILE_ZOOM_RATE -= 0.1;
             pb_value.innerHTML = window.TILE_ZOOM_RATE;
             this._map._update();
         };
         let pb_up = document.createElement('button');
         pb_up.innerHTML = "+";
         pb_up.onclick = (e) => {
-            window.TILE_ZOOM_RATE += 0.5;
+            window.TILE_ZOOM_RATE += 0.1;
             pb_value.innerHTML = window.TILE_ZOOM_RATE;
             this._map._update();
         };
@@ -106,14 +106,14 @@ class TileZoomDeadbandControl {
         let pb_down = document.createElement('button');
         pb_down.innerHTML = "-";
         pb_down.onclick = (e) => {
-            window.TILE_ZOOM_DEADBAND -= 0.5;
+            window.TILE_ZOOM_DEADBAND -= 0.1;
             pb_value.innerHTML = window.TILE_ZOOM_DEADBAND;
             this._map._update();
         };
         let pb_up = document.createElement('button');
         pb_up.innerHTML = "+";
         pb_up.onclick = (e) => {
-            window.TILE_ZOOM_DEADBAND += 0.5;
+            window.TILE_ZOOM_DEADBAND += 0.1;
             pb_value.innerHTML = window.TILE_ZOOM_DEADBAND;
             this._map._update();
         };
