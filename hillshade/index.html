@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8' />
+    <title>MapLibre Hilshade Demo</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <script src='./maplibre-gl-dev.js'></script>
+    <link href='./maplibre-gl.css' rel='stylesheet' />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id='map'></div>
+    <script>
+        var map = window.map = new maplibregl.Map({
+            container: 'map',
+            zoom: 6,
+            center: [170, -42],
+            pitch: 0,
+            renderWorldCopies: false,
+            hash: true,
+            style: {
+                version: 8,
+                sources: {
+                    terrainSource: {
+                        type: 'raster-dem',
+                        tiles: ['https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png?api=c01jp93wy1d0hjwwpeksyf0fntz&pipeline=terrain-rgb'],
+                        tileSize: 256
+                    },
+                },
+
+                layers: [
+                    {
+                        id: 'background',
+                        type: 'background',
+                        source: 'terrainSource',
+                        paint: {
+                            "background-color": "#800080"
+                        }
+                    }
+                ],
+                terrain: {
+                    source: 'terrainSource',
+                    exaggeration: 1
+                }
+            },
+            maxZoom: 18,
+            maxPitch: 85
+        });
+
+
+        styles = {};
+        styles['igor'] = {
+            id: 'hillshade',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+                'hillshade-shadow-color': '#000000',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-accent-color': '#000000',
+                'hillshade-method': 'igor'
+            }
+        };
+        styles['combined'] = {
+            id: 'hillshade',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+                'hillshade-shadow-color': '#000000',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-accent-color': '#000000',
+                'hillshade-method': 'combined'
+            }
+        };
+        styles['standard'] = {
+            id: 'hillshade',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+                'hillshade-shadow-color': '#000000',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-accent-color': '#000000',
+                'hillshade-method': 'standard'
+            }
+        };
+        styles['basic'] = {
+            id: 'hillshade',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+                'hillshade-shadow-color': '#000000',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-accent-color': '#000000',
+                'hillshade-method': 'basic'
+            }
+        };
+
+        let alt = 45;
+
+        class HillshadeControl {
+            onAdd(map) {
+                this._map = map;
+                this._container = document.createElement('div');
+                this._container.className = 'maplibregl-ctrl';
+
+                let input_igor = document.createElement('input');
+                input_igor.setAttribute('type', 'radio');
+                input_igor.setAttribute('name', 'method');
+                input_igor.setAttribute('id', 'igor');
+                input_igor.setAttribute('value', 'igor');
+                let value_igor = document.createElement('label');
+                value_igor.setAttribute('for', 'igor');
+                value_igor.innerHTML = "Igor";
+
+                let input_combined = document.createElement('input');
+                input_combined.setAttribute('type', 'radio');
+                input_combined.setAttribute('name', 'method');
+                input_combined.setAttribute('id', 'combined');
+                input_combined.setAttribute('value', 'combined');
+                let value_combined = document.createElement('label');
+                value_combined.setAttribute('for', 'combined');
+                value_combined.innerHTML = "combined";
+
+                let input_standard = document.createElement('input');
+                input_standard.setAttribute('type', 'radio');
+                input_standard.setAttribute('name', 'method');
+                input_standard.setAttribute('id', 'standard');
+                input_standard.setAttribute('value', 'standard');
+                let value_standard = document.createElement('label');
+                value_standard.setAttribute('for', 'standard');
+                value_standard.innerHTML = "standard";
+
+                let input_basic = document.createElement('input');
+                input_basic.setAttribute('type', 'radio');
+                input_basic.setAttribute('name', 'method');
+                input_basic.setAttribute('id', 'basic');
+                input_basic.setAttribute('value', 'basic');
+                let value_basic = document.createElement('label');
+                value_basic.setAttribute('for', 'basic');
+                value_basic.innerHTML = "basic";
+
+
+                input_standard.oninput = (e) => {
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles['standard'].paint['hillshade-illumination-altitude'] = alt;
+                    map.addLayer(styles['standard']);
+                }
+
+                input_igor.oninput = (e) => {
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles['igor'].paint['hillshade-illumination-altitude'] = alt;
+                    map.addLayer(styles['igor']);
+                }
+
+                input_combined.oninput = (e) => {
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles['combined'].paint['hillshade-illumination-altitude'] = alt;
+                    map.addLayer(styles['combined']);
+                }
+
+                input_basic.oninput = (e) => {
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles['basic'].paint['hillshade-illumination-altitude'] = alt;
+                    map.addLayer(styles['basic']);
+                }
+
+                this._container.appendChild(input_standard);
+                this._container.appendChild(value_standard);
+                this._container.appendChild(input_combined);
+                this._container.appendChild(value_combined);
+                this._container.appendChild(input_igor);
+                this._container.appendChild(value_igor);
+                this._container.appendChild(input_basic);
+                this._container.appendChild(value_basic);
+                return this._container;
+            }
+
+            onRemove() {
+                this._container.parentNode.removeChild(this._container);
+                this._map = undefined;
+            }
+        }
+
+        class IlluminationAltitudeControl {
+            onAdd(map) {
+                this._map = map;
+                this._container = document.createElement('div');
+                this._container.className = 'maplibregl-ctrl';
+                let pb_label = document.createElement('span');
+                pb_label.innerHTML = "Illumination Altitude = ";
+                let pb_value = document.createElement('span');
+                pb_value.innerHTML = alt;
+                let pb_down = document.createElement('button');
+                pb_down.innerHTML = "-";
+                pb_down.onclick = (e) => {
+                    if (alt >= 5) {
+                        alt -= 5;
+                        pb_value.innerHTML = alt;
+                        let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
+                        try {
+                            map.removeLayer('hillshade');
+                        } catch (e) { }
+                        styles[method].paint['hillshade-illumination-altitude'] = alt;
+                        map.addLayer(styles[method]);
+
+                    }
+                };
+                let pb_up = document.createElement('button');
+                pb_up.innerHTML = "+";
+                pb_up.onclick = (e) => {
+                    if (alt <= 85) {
+                        alt += 5;
+                        pb_value.innerHTML = alt;
+                        let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
+                        try {
+                            map.removeLayer('hillshade');
+                        } catch (e) { }
+                        styles[method].paint['hillshade-illumination-altitude'] = alt;
+                        map.addLayer(styles[method]);
+                    }
+                };
+                this._container.appendChild(pb_label);
+                this._container.appendChild(pb_value);
+                this._container.appendChild(pb_down);
+                this._container.appendChild(pb_up);
+                return this._container;
+            }
+
+            onRemove() {
+                this._container.parentNode.removeChild(this._container);
+                this._map = undefined;
+            }
+        }
+
+        map.addControl(new HillshadeControl());
+        map.addControl(new IlluminationAltitudeControl());
+
+    </script>
+
+</body>
+
+</html>
