@@ -24632,6 +24632,25 @@ class UniformColor extends Uniform {
         }
     }
 }
+class UniformColorArray extends Uniform {
+    constructor(context, location) {
+        super(context, location);
+        this.current = new Array();
+    }
+    set(v) {
+        if (v != this.current) {
+            this.current = v;
+            const values = new Float32Array(v.length * 4);
+            for (let i = 0; i < v.length; i++) {
+                values[4 * i] = v[i].r;
+                values[4 * i + 1] = v[i].g;
+                values[4 * i + 2] = v[i].b;
+                values[4 * i + 3] = v[i].a;
+            }
+            this.gl.uniform4fv(this.location, values);
+        }
+    }
+}
 const emptyMat4 = new Float32Array(16);
 class UniformMatrix4f extends Uniform {
     constructor(context, location) {
@@ -35184,6 +35203,7 @@ exports.Uniform2f = Uniform2f;
 exports.Uniform3f = Uniform3f;
 exports.Uniform4f = Uniform4f;
 exports.UniformColor = UniformColor;
+exports.UniformColorArray = UniformColorArray;
 exports.UniformMatrix4f = UniformMatrix4f;
 exports.UnwrappedTileID = UnwrappedTileID;
 exports.ValidationError = ValidationError;
@@ -42775,8 +42795,6 @@ class SourceFeatureState {
     }
 }
 
-window.TILE_ZOOM_RATE = 1.0;
-window.TILE_ZOOM_DEADBAND = 0.0;
 /**
  * A simple/heuristic function that returns whether the tile is visible under the current transform.
  * @returns an {@link IntersectionResult}.
@@ -42802,14 +42820,14 @@ function calculateTileZoom(requestedCenterZoom, distanceToTile2D, distanceToTile
     * At 1, tiles are loaded with approximately constant screen area.
     * At 2, tiles are loaded with approximately constant screen Y resolution.
     */
-    const pitchTileLoadingBehavior = window.TILE_ZOOM_RATE;
+    const pitchTileLoadingBehavior = 1.0;
     /**
     * Controls how tiles are loaded at high pitch angles. Controls how different the distance to a tile must be (compared with the center point)
     * before a new zoom level is requested. For example, if tileZoomDeadband = 1 and the center zoom is 14, tiles distant enough to be loaded at
     * z13 will be loaded at z14, and tiles distant enough to be loaded at z14 will be loaded at z15. A higher number causes more tiles to be loaded
     * at the center zoom level. This also results in more tiles being loaded overall.
     */
-    const tileZoomDeadband = window.TILE_ZOOM_DEADBAND;
+    const tileZoomDeadband = 0.0;
     let thisTileDesiredZ = requestedCenterZoom;
     const thisTilePitch = Math.atan(distanceToTile2D / distanceToTileZ);
     const distanceToTile3D = Math.hypot(distanceToTile2D, distanceToTileZ);
@@ -46641,7 +46659,7 @@ var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nunifor
 var hillshadePrepareVert = 'uniform mat4 u_matrix;uniform vec2 u_dimension;in vec2 a_pos;in vec2 a_texture_pos;out vec2 v_pos;void main() {gl_Position=u_matrix*vec4(a_pos,0,1);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_texture_pos/8192.0)*scale+epsilon;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform int u_method;uniform float u_alt;\n#define PI 3.141592653589793\n#define STANDARD 0\n#define COMBINED 1\n#define IGOR 2\n#define MULTIDIRECTIONAL 3\n#define BASIC 4\nfloat get_aspect(vec2 deriv){return deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);}void igor_hillshade(vec2 deriv){float aspect=get_aspect(deriv);float azimuth=u_light.y+PI;float slope_stength=atan(length(deriv))*2.0/PI;float aspect_strength=1.0-abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);float shadow_strength=slope_stength*aspect_strength;float highlight_strength=slope_stength*(1.0-aspect_strength);fragColor=u_shadow*shadow_strength+u_highlight*highlight_strength;}void standard_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float slope=atan(1.25*length(deriv));float aspect=get_aspect(deriv);float intensity=u_light.x;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;}void basic_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void combined_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));cang=mix(0.5,cang,atan(length(deriv))*2.0/PI);float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void main() {vec4 pixel=texture(u_image,v_pos);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));vec2 deriv=((pixel.rg*2.0)-1.0)/scaleFactor;if(u_method==STANDARD){standard_hillshade(deriv);}else if(u_method==COMBINED){combined_hillshade(deriv);}else if(u_method==IGOR){igor_hillshade(deriv);}else if(u_method==MULTIDIRECTIONAL){basic_hillshade(deriv);}else if(u_method==BASIC){basic_hillshade(deriv);}else\n{standard_hillshade(deriv);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform int u_method;uniform float u_alt;uniform vec4 u_shadows[4];uniform vec4 u_highlights[4];uniform int u_num_multidirectional;\n#define PI 3.141592653589793\n#define STANDARD 0\n#define COMBINED 1\n#define IGOR 2\n#define MULTIDIRECTIONAL 3\n#define BASIC 4\nfloat get_aspect(vec2 deriv){return deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);}void igor_hillshade(vec2 deriv){float aspect=get_aspect(deriv);float azimuth=u_light.y+PI;float slope_stength=atan(length(deriv))*2.0/PI;float aspect_strength=1.0-abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);float shadow_strength=slope_stength*aspect_strength;float highlight_strength=slope_stength*(1.0-aspect_strength);fragColor=u_shadow*shadow_strength+u_highlight*highlight_strength;}void standard_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float slope=atan(1.25*length(deriv));float aspect=get_aspect(deriv);float intensity=u_light.x;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;}void basic_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void multidirectional_hillshade(vec2 deriv){float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);int N=u_num_multidirectional;fragColor=vec4(0,0,0,0);for(int i=0; i < N; i++){float azimuth=u_light.y+PI+float(i-1)*PI/float(N);float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);fragColor+=mix(u_shadows[i],u_highlights[i],shade)*abs(2.0*shade-1.0)/float(N);}}void combined_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));cang=mix(0.5,cang,atan(length(deriv))*2.0/PI);float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void main() {vec4 pixel=texture(u_image,v_pos);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));vec2 deriv=((pixel.rg*2.0)-1.0)/scaleFactor;if(u_method==STANDARD){standard_hillshade(deriv);}else if(u_method==COMBINED){combined_hillshade(deriv);}else if(u_method==IGOR){igor_hillshade(deriv);}else if(u_method==MULTIDIRECTIONAL){multidirectional_hillshade(deriv);}else if(u_method==BASIC){basic_hillshade(deriv);}else\n{standard_hillshade(deriv);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadeVert = 'uniform mat4 u_matrix;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);v_pos=a_pos/8192.0;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -53349,7 +53367,10 @@ const hillshadeUniforms = (context, locations) => ({
     'u_shadow': new performance$1.UniformColor(context, locations.u_shadow),
     'u_highlight': new performance$1.UniformColor(context, locations.u_highlight),
     'u_accent': new performance$1.UniformColor(context, locations.u_accent),
-    'u_method': new performance$1.Uniform1i(context, locations.u_method)
+    'u_method': new performance$1.Uniform1i(context, locations.u_method),
+    'u_shadows': new performance$1.UniformColorArray(context, locations.u_shadows),
+    'u_highlights': new performance$1.UniformColorArray(context, locations.u_highlights),
+    'u_num_multidirectional': new performance$1.Uniform1i(context, locations.u_num_multidirectional)
 });
 const hillshadePrepareUniforms = (context, locations) => ({
     'u_matrix': new performance$1.UniformMatrix4f(context, locations.u_matrix),
@@ -53379,8 +53400,11 @@ const hillshadeUniformValues = (painter, tile, layer) => {
         'u_accent': accent,
         'u_method': method == 'combined' ? 1 :
             method == 'igor' ? 2 :
-                method == 'multidirectional' ? 2 :
-                    method == 'basic' ? 4 : 0
+                method == 'multidirectional' ? 3 :
+                    method == 'basic' ? 4 : 0,
+        'u_highlights': [new performance$1.Color(1, 0.475, 0.302), new performance$1.Color(1, 1, 0.6), new performance$1.Color(0.475, 1, 0.3019), new performance$1.Color(0, 1, 0.502)],
+        'u_shadows': [new performance$1.Color(0, 0.525, 0.698), new performance$1.Color(0, 0, 0.4), new performance$1.Color(0.525, 0, 0.698), new performance$1.Color(1, 0, 0.498)],
+        'u_num_multidirectional': 4
     };
 };
 const hillshadeUniformPrepareValues = (tileID, dem) => {

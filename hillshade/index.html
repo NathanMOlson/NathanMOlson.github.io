@@ -108,6 +108,17 @@
                 'hillshade-method': 'basic'
             }
         };
+        styles['multidirectional'] = {
+            id: 'hillshade',
+            type: 'hillshade',
+            source: 'terrainSource',
+            paint: {
+                'hillshade-shadow-color': '#000000',
+                'hillshade-highlight-color': '#FFFFFF',
+                'hillshade-accent-color': '#000000',
+                'hillshade-method': 'multidirectional'
+            }
+        };
 
         let alt = 45;
 
@@ -153,6 +164,15 @@
                 value_basic.setAttribute('for', 'basic');
                 value_basic.innerHTML = "basic";
 
+                let input_multidirectional = document.createElement('input');
+                input_multidirectional.setAttribute('type', 'radio');
+                input_multidirectional.setAttribute('name', 'method');
+                input_multidirectional.setAttribute('id', 'multidirectional');
+                input_multidirectional.setAttribute('value', 'multidirectional');
+                let value_multidirectional = document.createElement('label');
+                value_multidirectional.setAttribute('for', 'multidirectional');
+                value_multidirectional.innerHTML = "multidirectional";
+
 
                 input_standard.oninput = (e) => {
                     try {
@@ -178,6 +198,14 @@
                     map.addLayer(styles['combined']);
                 }
 
+                input_multidirectional.oninput = (e) => {
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles['multidirectional'].paint['hillshade-illumination-altitude'] = alt;
+                    map.addLayer(styles['multidirectional']);
+                }
+
                 input_basic.oninput = (e) => {
                     try {
                         map.removeLayer('hillshade');
@@ -194,6 +222,8 @@
                 this._container.appendChild(value_igor);
                 this._container.appendChild(input_basic);
                 this._container.appendChild(value_basic);
+                this._container.appendChild(input_multidirectional);
+                this._container.appendChild(value_multidirectional);
                 return this._container;
             }
 
