@@ -68,6 +68,13 @@
 
 
         styles = {};
+        styles['background'] = {
+            id: 'background',
+            type: 'background',
+            paint: {
+                "background-color": "#800080"
+            }
+        };
         styles['igor'] = {
             id: 'hillshade',
             type: 'hillshade',
@@ -288,8 +295,125 @@
             }
         }
 
+        class HillshadeColorControl {
+            onAdd(map) {
+                this._map = map;
+                this._container = document.createElement('div');
+                this._container.className = 'maplibregl-ctrl';
+
+                let createLabel = (name) => {
+                    let label = document.createElement('span');
+                    label.innerHTML = name + ": ";
+                    return label;
+                }
+
+                let background_label = createLabel("Background");
+                let background_colorpicker = document.createElement('input');
+                background_colorpicker.setAttribute('type', 'color');
+                background_colorpicker.setAttribute('value', '#800080');
+
+                let colorpickers = {};
+                let opacities = {};
+
+                let createColorPicker = (name) => {
+                    colorpickers[name] = document.createElement('input');
+                    colorpickers[name].setAttribute('type', 'color');
+                    opacities[name] = document.createElement('input');
+                    opacities[name].setAttribute('type', 'range');
+                    opacities[name].setAttribute('min', '0');
+                    opacities[name].setAttribute('max', '1');
+                    opacities[name].setAttribute('step', '0.01');
+                }
+
+                createColorPicker('shadow');
+                createColorPicker('highlight');
+                createColorPicker('accent');
+
+                colorpickers['shadow'].setAttribute('value', '#000000');
+                colorpickers['highlight'].setAttribute('value', '#FFFFFF');
+                colorpickers['accent'].setAttribute('value', '#000000');
+                opacities['shadow'].setAttribute('value', 1);
+                opacities['highlight'].setAttribute('value', 1);
+                opacities['accent'].setAttribute('value', 1);
+
+                let shadow_label = createLabel("Shadow");
+                let highlight_label = createLabel("Highlight");
+                let accent_label = createLabel("Accent");
+
+                let getColor = (name) => {
+                    const v = colorpickers[name].value;
+                    const o = opacities[name].value;
+                    return v + (255 * o).toString(16).padStart(2, '0');
+                }
+
+                let setColors = () => {
+                    try {
+                        map.removeLayer('background');
+                    } catch (e) { }
+                    styles['background'].paint['background-color'] = background_colorpicker.value;
+                    map.addLayer(styles['background']);
+                    let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
+                    try {
+                        map.removeLayer('hillshade');
+                    } catch (e) { }
+                    styles[method].paint['hillshade-shadow-color'] = getColor('shadow');
+                    styles[method].paint['hillshade-highlight-color'] = getColor('highlight');
+                    styles[method].paint['hillshade-accent-color'] = getColor('accent');
+                    map.addLayer(styles[method]);
+                }
+                background_colorpicker.onchange = (e) => {
+                    setColors();
+                }
+                colorpickers['shadow'].onchange = (e) => {
+                    setColors();
+                }
+                colorpickers['highlight'].onchange = (e) => {
+                    setColors();
+                }
+                colorpickers['accent'].onchange = (e) => {
+                    setColors();
+                }
+                opacities['shadow'].onchange = (e) => {
+                    setColors();
+                }
+                opacities['highlight'].onchange = (e) => {
+                    setColors();
+                }
+                opacities['accent'].onchange = (e) => {
+                    setColors();
+                }
+
+                let newline = document.createElement('p');
+
+                this._container.appendChild(background_label);
+                this._container.appendChild(background_colorpicker);
+                this._container.appendChild(newline);
+                this._container.appendChild(shadow_label);
+                this._container.appendChild(colorpickers['shadow']);
+                this._container.appendChild(opacities['shadow']);
+                this._container.appendChild(newline.cloneNode());
+                this._container.appendChild(highlight_label);
+                this._container.appendChild(colorpickers['highlight']);
+                this._container.appendChild(opacities['highlight']);
+                this._container.appendChild(newline.cloneNode());
+                this._container.appendChild(accent_label);
+                this._container.appendChild(colorpickers['accent']);
+                this._container.appendChild(opacities['accent']);
+                return this._container;
+            }
+
+            onRemove() {
+                this._container.parentNode.removeChild(this._container);
+                this._map = undefined;
+            }
+        }
+
         map.addControl(new HillshadeControl());
         map.addControl(new IlluminationAltitudeControl());
+        map.addControl(new HillshadeColorControl());
+        map.on('load', () => {
+            document.getElementById('standard').click();
+        });
 
     </script>
 
