@@ -41,13 +41,17 @@
                         tiles: ['https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png?api=c01jp93wy1d0hjwwpeksyf0fntz&pipeline=terrain-rgb'],
                         tileSize: 256
                     },
+                    hillshadeSource: {
+                        type: 'raster-dem',
+                        tiles: ['https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png?api=c01jp93wy1d0hjwwpeksyf0fntz&pipeline=terrain-rgb'],
+                        tileSize: 256
+                    }
                 },
 
                 layers: [
                     {
                         id: 'background',
                         type: 'background',
-                        source: 'terrainSource',
                         paint: {
                             "background-color": "#800080"
                         }
@@ -67,7 +71,7 @@
         styles['igor'] = {
             id: 'hillshade',
             type: 'hillshade',
-            source: 'terrainSource',
+            source: 'hillshadeSource',
             paint: {
                 'hillshade-shadow-color': '#000000',
                 'hillshade-highlight-color': '#FFFFFF',
@@ -78,7 +82,7 @@
         styles['combined'] = {
             id: 'hillshade',
             type: 'hillshade',
-            source: 'terrainSource',
+            source: 'hillshadeSource',
             paint: {
                 'hillshade-shadow-color': '#000000',
                 'hillshade-highlight-color': '#FFFFFF',
@@ -89,7 +93,7 @@
         styles['standard'] = {
             id: 'hillshade',
             type: 'hillshade',
-            source: 'terrainSource',
+            source: 'hillshadeSource',
             paint: {
                 'hillshade-shadow-color': '#000000',
                 'hillshade-highlight-color': '#FFFFFF',
@@ -100,7 +104,7 @@
         styles['basic'] = {
             id: 'hillshade',
             type: 'hillshade',
-            source: 'terrainSource',
+            source: 'hillshadeSource',
             paint: {
                 'hillshade-shadow-color': '#000000',
                 'hillshade-highlight-color': '#FFFFFF',
@@ -111,7 +115,7 @@
         styles['multidirectional'] = {
             id: 'hillshade',
             type: 'hillshade',
-            source: 'terrainSource',
+            source: 'hillshadeSource',
             paint: {
                 'hillshade-shadow-color': '#000000',
                 'hillshade-highlight-color': '#FFFFFF',
