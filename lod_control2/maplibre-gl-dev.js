@@ -1,6 +1,6 @@
 /**
  * MapLibre GL JS
- * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.2.0/LICENSE.txt
+ * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.3.0/LICENSE.txt
  */
 (function (global, factory) {
 typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
@@ -12722,6 +12722,20 @@ var paint_hillshade = {
 		},
 		"property-type": "data-constant"
 	},
+	"hillshade-illumination-altitude": {
+		type: "number",
+		"default": 45,
+		minimum: 0,
+		maximum: 90,
+		transition: false,
+		expression: {
+			interpolated: true,
+			parameters: [
+				"zoom"
+			]
+		},
+		"property-type": "data-constant"
+	},
 	"hillshade-illumination-anchor": {
 		type: "enum",
 		values: {
@@ -12799,6 +12813,8 @@ var paint_hillshade = {
 			combined: {
 			},
 			multidirectional: {
+			},
+			basic: {
 			}
 		},
 		"default": "standard",
@@ -25631,7 +25647,7 @@ class CircleStyleLayer extends StyleLayer {
             getMaximumPaintValue('circle-stroke-width', this, circleBucket) +
             translateDistance(this.paint.get('circle-translate'));
     }
-    queryIntersectsFeature({ queryGeometry, feature, featureState, geometry, transform, pixelsToTileUnits, pixelPosMatrix }) {
+    queryIntersectsFeature({ queryGeometry, feature, featureState, geometry, transform, pixelsToTileUnits, unwrappedTileID, getElevation }) {
         const translatedPolygon = translate(queryGeometry, this.paint.get('circle-translate'), this.paint.get('circle-translate-anchor'), -transform.bearingInRadians, pixelsToTileUnits);
         const radius = this.paint.get('circle-radius').evaluate(feature, featureState);
         const stroke = this.paint.get('circle-stroke-width').evaluate(feature, featureState);
@@ -25641,18 +25657,18 @@ class CircleStyleLayer extends StyleLayer {
         // A circle with fixed scaling relative to the viewport gets larger in tile space as it moves into the distance
         // A circle with fixed scaling relative to the map gets smaller in viewport space as it moves into the distance
         const alignWithMap = this.paint.get('circle-pitch-alignment') === 'map';
-        const transformedPolygon = alignWithMap ? translatedPolygon : projectQueryGeometry$1(translatedPolygon, pixelPosMatrix);
+        const transformedPolygon = alignWithMap ? translatedPolygon : projectQueryGeometry$1(translatedPolygon, transform, unwrappedTileID, getElevation);
         const transformedSize = alignWithMap ? size * pixelsToTileUnits : size;
         for (const ring of geometry) {
             for (const point of ring) {
-                const transformedPoint = alignWithMap ? point : projectPoint(point, pixelPosMatrix);
+                const transformedPoint = alignWithMap ? point : projectPoint(point, transform, unwrappedTileID, getElevation);
                 let adjustedSize = transformedSize;
-                const projectedCenter = transformMat4$1([], [point.x, point.y, 0, 1], pixelPosMatrix);
+                const w = transform.projectTileCoordinates(point.x, point.y, unwrappedTileID, getElevation).signedDistanceFromCamera;
                 if (this.paint.get('circle-pitch-scale') === 'viewport' && this.paint.get('circle-pitch-alignment') === 'map') {
-                    adjustedSize *= projectedCenter[3] / transform.cameraToCenterDistance;
+                    adjustedSize *= w / transform.cameraToCenterDistance;
                 }
                 else if (this.paint.get('circle-pitch-scale') === 'map' && this.paint.get('circle-pitch-alignment') === 'viewport') {
-                    adjustedSize *= transform.cameraToCenterDistance / projectedCenter[3];
+                    adjustedSize *= transform.cameraToCenterDistance / w;
                 }
                 if (polygonIntersectsBufferedPoint(transformedPolygon, transformedPoint, adjustedSize))
                     return true;
@@ -25661,13 +25677,16 @@ class CircleStyleLayer extends StyleLayer {
         return false;
     }
 }
-function projectPoint(p, pixelPosMatrix) {
-    const point = transformMat4$1([], [p.x, p.y, 0, 1], pixelPosMatrix);
-    return new Point(point[0] / point[3], point[1] / point[3]);
+function projectPoint(tilePoint, transform, unwrappedTileID, getElevation) {
+    // Convert `tilePoint` from tile coordinates to clip coordinates.
+    const clipPoint = transform.projectTileCoordinates(tilePoint.x, tilePoint.y, unwrappedTileID, getElevation).point;
+    // Convert `clipPoint` from clip coordinates into pixel/screen coordinates.
+    const pixelPoint = new Point((clipPoint.x * 0.5 + 0.5) * transform.width, (-clipPoint.y * 0.5 + 0.5) * transform.height);
+    return pixelPoint;
 }
-function projectQueryGeometry$1(queryGeometry, pixelPosMatrix) {
+function projectQueryGeometry$1(queryGeometry, transform, unwrappedTileID, getElevation) {
     return queryGeometry.map((p) => {
-        return projectPoint(p, pixelPosMatrix);
+        return projectPoint(p, transform, unwrappedTileID, getElevation);
     });
 }
 
@@ -25884,6 +25903,7 @@ class HeatmapStyleLayer extends StyleLayer {
 let paint$6;
 const getPaint$6 = () => paint$6 = paint$6 || new Properties({
     "hillshade-illumination-direction": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-illumination-direction"]),
+    "hillshade-illumination-altitude": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-illumination-altitude"]),
     "hillshade-illumination-anchor": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-illumination-anchor"]),
     "hillshade-exaggeration": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-exaggeration"]),
     "hillshade-shadow-color": new DataConstantProperty(v8Spec["paint_hillshade"]["hillshade-shadow-color"]),
@@ -33250,7 +33270,9 @@ class FeatureIndex {
                     zoom: this.z,
                     transform: args.transform,
                     pixelsToTileUnits,
-                    pixelPosMatrix: args.pixelPosMatrix
+                    pixelPosMatrix: args.pixelPosMatrix,
+                    unwrappedTileID: this.tileID.toUnwrapped(),
+                    getElevation: args.getElevation
                 });
             });
         }
@@ -35132,6 +35154,7 @@ exports.KDBush = KDBush;
 exports.LineBucket = LineBucket;
 exports.LineStripIndexArray = LineStripIndexArray;
 exports.LngLat = LngLat;
+exports.MAX_TILE_ZOOM = MAX_TILE_ZOOM;
 exports.MAX_VALID_LATITUDE = MAX_VALID_LATITUDE;
 exports.MercatorCoordinate = MercatorCoordinate;
 exports.NORTH_POLE_Y = NORTH_POLE_Y;
@@ -37960,7 +37983,7 @@ define('index', ['exports', './shared'], (function (exports, performance$1) { 'u
 
 var name = "maplibre-gl";
 var description = "BSD licensed community fork of mapbox-gl, a WebGL interactive maps library";
-var version$2 = "5.2.0";
+var version$2 = "5.3.0";
 var main = "dist/maplibre-gl.js";
 var style = "dist/maplibre-gl.css";
 var license = "BSD-3-Clause";
@@ -38016,7 +38039,7 @@ var devDependencies = {
 	"@stylistic/eslint-plugin-ts": "^4.2.0",
 	"@types/benchmark": "^2.1.5",
 	"@types/d3": "^7.4.3",
-	"@types/diff": "^7.0.1",
+	"@types/diff": "^7.0.2",
 	"@types/earcut": "^3.0.0",
 	"@types/eslint": "^9.6.1",
 	"@types/gl": "^6.0.5",
@@ -38025,34 +38048,34 @@ var devDependencies = {
 	"@types/minimist": "^1.2.5",
 	"@types/murmurhash-js": "^1.0.6",
 	"@types/nise": "^1.4.5",
-	"@types/node": "^22.13.10",
+	"@types/node": "^22.14.0",
 	"@types/offscreencanvas": "^2019.7.3",
 	"@types/pixelmatch": "^5.2.6",
 	"@types/pngjs": "^6.0.5",
-	"@types/react": "^19.0.10",
-	"@types/react-dom": "^19.0.4",
+	"@types/react": "^19.1.0",
+	"@types/react-dom": "^19.1.1",
 	"@types/request": "^2.48.12",
 	"@types/shuffle-seed": "^1.1.3",
 	"@types/window-or-global": "^1.0.6",
-	"@typescript-eslint/eslint-plugin": "^8.26.1",
-	"@typescript-eslint/parser": "^8.26.1",
-	"@vitest/coverage-v8": "3.0.7",
-	"@vitest/ui": "3.0.7",
+	"@typescript-eslint/eslint-plugin": "^8.29.0",
+	"@typescript-eslint/parser": "^8.29.0",
+	"@vitest/coverage-v8": "3.1.1",
+	"@vitest/ui": "3.1.1",
 	address: "^2.0.3",
 	autoprefixer: "^10.4.21",
 	benchmark: "^2.1.4",
 	canvas: "^3.1.0",
-	cspell: "^8.17.5",
+	cspell: "^8.18.1",
 	cssnano: "^7.0.6",
 	d3: "^7.9.0",
 	"d3-queue": "^3.0.7",
-	"devtools-protocol": "^0.0.1433962",
+	"devtools-protocol": "^0.0.1441961",
 	diff: "^7.0.0",
 	"dts-bundle-generator": "^9.5.1",
-	eslint: "^9.22.0",
+	eslint: "^9.23.0",
 	"eslint-plugin-html": "^8.1.2",
 	"eslint-plugin-import": "^2.31.0",
-	"eslint-plugin-react": "^7.37.4",
+	"eslint-plugin-react": "^7.37.5",
 	"eslint-plugin-tsdoc": "0.4.0",
 	"eslint-plugin-vitest": "^0.5.4",
 	expect: "^29.7.0",
@@ -38076,8 +38099,8 @@ var devDependencies = {
 	"pretty-bytes": "^6.1.1",
 	puppeteer: "^24.1.1",
 	react: "^19.0.0",
-	"react-dom": "^19.0.0",
-	rollup: "^4.36.0",
+	"react-dom": "^19.1.0",
+	rollup: "^4.39.0",
 	"rollup-plugin-sourcemaps2": "^0.5.0",
 	rw: "^1.3.3",
 	semver: "^7.7.1",
@@ -38085,15 +38108,15 @@ var devDependencies = {
 	"shuffle-seed": "^1.1.6",
 	"source-map-explorer": "^2.5.3",
 	st: "^3.0.1",
-	stylelint: "^16.16.0",
+	stylelint: "^16.17.0",
 	"stylelint-config-standard": "^37.0.0",
 	"ts-node": "^10.9.2",
 	tslib: "^2.8.1",
-	typedoc: "^0.27.9",
-	"typedoc-plugin-markdown": "^4.4.2",
-	"typedoc-plugin-missing-exports": "^3.1.0",
+	typedoc: "^0.28.1",
+	"typedoc-plugin-markdown": "^4.6.1",
+	"typedoc-plugin-missing-exports": "^4.0.0",
 	typescript: "^5.8.2",
-	vitest: "3.0.7",
+	vitest: "3.1.1",
 	"vitest-webgl-canvas-mock": "^1.1.0"
 };
 var scripts = {
@@ -39919,7 +39942,7 @@ function queryIncludes3DLayer(layers, styleLayers, sourceID) {
     }
     return false;
 }
-function queryRenderedFeatures(sourceCache, styleLayers, serializedLayers, queryGeometry, params, transform) {
+function queryRenderedFeatures(sourceCache, styleLayers, serializedLayers, queryGeometry, params, transform, getElevation) {
     var _a;
     const has3DLayer = queryIncludes3DLayer((_a = params === null || params === void 0 ? void 0 : params.layers) !== null && _a !== void 0 ? _a : null, styleLayers, sourceCache.id);
     const maxPitchScaleFactor = transform.maxPitchScaleFactor();
@@ -39929,7 +39952,7 @@ function queryRenderedFeatures(sourceCache, styleLayers, serializedLayers, query
     for (const tileIn of tilesIn) {
         renderedFeatureLayers.push({
             wrappedTileID: tileIn.tileID.wrapped().key,
-            queryResults: tileIn.tile.queryRenderedFeatures(styleLayers, serializedLayers, sourceCache._state, tileIn.queryGeometry, tileIn.cameraQueryGeometry, tileIn.scale, params, transform, maxPitchScaleFactor, getPixelPosMatrix(sourceCache.transform, tileIn.tileID))
+            queryResults: tileIn.tile.queryRenderedFeatures(styleLayers, serializedLayers, sourceCache._state, tileIn.queryGeometry, tileIn.cameraQueryGeometry, tileIn.scale, params, transform, maxPitchScaleFactor, getPixelPosMatrix(sourceCache.transform, tileIn.tileID), getElevation ? (x, y) => getElevation(tileIn.tileID, x, y) : undefined)
         });
     }
     const result = mergeRenderedFeatureLayers(renderedFeatureLayers);
@@ -41476,6 +41499,9 @@ class ImageSource extends performance$1.Evented {
         // Compute the coordinates of the tile we'll use to hold this image's
         // render data
         this.tileID = getCoordinatesCenterTileID(cornerCoords);
+        // Compute tiles overlapping with the image. We need to know for which
+        // terrain tiles we have to render the image.
+        this.terrainTileRanges = this._getOverlappingTileRanges(cornerCoords);
         // Constrain min/max zoom to our tile's zoom level in order to force
         // SourceCache to request this tile (no matter what the map's zoom
         // level)
@@ -41536,6 +41562,39 @@ class ImageSource extends performance$1.Evented {
     }
     hasTransition() {
         return false;
+    }
+    /**
+     * Given a list of coordinates, determine overlapping tile ranges for all zoom levels.
+     *
+     * @returns Overlapping tile ranges for all zoom levels.
+     * @internal
+     */
+    _getOverlappingTileRanges(coords) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const coord of coords) {
+            minX = Math.min(minX, coord.x);
+            minY = Math.min(minY, coord.y);
+            maxX = Math.max(maxX, coord.x);
+            maxY = Math.max(maxY, coord.y);
+        }
+        const ranges = {};
+        for (let z = 0; z <= performance$1.MAX_TILE_ZOOM; z++) {
+            const tilesAtZoom = Math.pow(2, z);
+            const minTileX = Math.floor(minX * tilesAtZoom);
+            const minTileY = Math.floor(minY * tilesAtZoom);
+            const maxTileX = Math.floor(maxX * tilesAtZoom);
+            const maxTileY = Math.floor(maxY * tilesAtZoom);
+            ranges[z] = {
+                minTileX,
+                minTileY,
+                maxTileX,
+                maxTileY
+            };
+        }
+        return ranges;
     }
 }
 /**
@@ -42224,7 +42283,7 @@ class Tile {
     }
     // Queries non-symbol features rendered for this tile.
     // Symbol features are queried globally
-    queryRenderedFeatures(layers, serializedLayers, sourceFeatureState, queryGeometry, cameraQueryGeometry, scale, params, transform, maxPitchScaleFactor, pixelPosMatrix) {
+    queryRenderedFeatures(layers, serializedLayers, sourceFeatureState, queryGeometry, cameraQueryGeometry, scale, params, transform, maxPitchScaleFactor, pixelPosMatrix, getElevation) {
         if (!this.latestFeatureIndex || !this.latestFeatureIndex.rawTileData)
             return {};
         return this.latestFeatureIndex.query({
@@ -42235,7 +42294,8 @@ class Tile {
             pixelPosMatrix,
             transform,
             params,
-            queryPadding: this.queryPadding * maxPitchScaleFactor
+            queryPadding: this.queryPadding * maxPitchScaleFactor,
+            getElevation
         }, layers, serializedLayers, sourceFeatureState);
     }
     querySourceFeatures(result, params) {
@@ -46596,7 +46656,7 @@ var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nunifor
 var hillshadePrepareVert = 'uniform mat4 u_matrix;uniform vec2 u_dimension;in vec2 a_pos;in vec2 a_texture_pos;out vec2 v_pos;void main() {gl_Position=u_matrix*vec4(a_pos,0,1);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_texture_pos/8192.0)*scale+epsilon;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform int u_method;\n#define PI 3.141592653589793\n#define STANDARD 0\n#define COMBINED 1\n#define IGOR 2\n#define MULTIDIRECTIONAL 3\nfloat get_aspect(vec2 deriv){return deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);}void igor_hillshade(vec2 deriv){float aspect=get_aspect(deriv);float azimuth=u_light.y+PI;float slope_stength=atan(length(deriv))*2.0/PI;float aspect_strength=1.0-abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);float shadow_strength=slope_stength*aspect_strength;float highlight_strength=slope_stength*(1.0-aspect_strength);fragColor=u_shadow*shadow_strength+u_highlight*highlight_strength;}void standard_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float slope=atan(1.25*length(deriv));float aspect=get_aspect(deriv);float intensity=u_light.x;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;}void basic_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float alt=25.0*PI/180.0;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(alt);float sin_alt=sin(alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void combined_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float alt=25.0*PI/180.0;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(alt);float sin_alt=sin(alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));cang=mix(0.5,cang,atan(length(deriv))*2.0/PI);float shade=clamp(cang,0.0,1.0);fragColor=mix(u_shadow,u_highlight,shade)*abs(2.0*shade-1.0);}void main() {vec4 pixel=texture(u_image,v_pos);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));vec2 deriv=((pixel.rg*2.0)-1.0)/scaleFactor;if(u_method==STANDARD){standard_hillshade(deriv);}else if(u_method==COMBINED){combined_hillshade(deriv);}else if(u_method==IGOR){igor_hillshade(deriv);}else if(u_method==MULTIDIRECTIONAL){basic_hillshade(deriv);}else\n{standard_hillshade(deriv);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;\n#define PI 3.141592653589793\nvoid main() {vec4 pixel=texture(u_image,v_pos);vec2 deriv=((pixel.rg*2.0)-1.0);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));float slope=atan(1.25*length(deriv)/scaleFactor);float aspect=deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);float intensity=u_light.x;float azimuth=u_light.y+PI;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadeVert = 'uniform mat4 u_matrix;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);v_pos=a_pos/8192.0;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -46991,7 +47051,8 @@ function unprojectFromWorldCoordinates(worldSize, point) {
  * @returns Horizon above center in pixels.
  */
 function getMercatorHorizon(transform) {
-    return transform.cameraToCenterDistance * Math.min(Math.tan(performance$1.degreesToRadians(90 - transform.pitch)) * 0.85, Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch)));
+    return transform.cameraToCenterDistance *
+        Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch));
 }
 function calculateTileMatrix(unwrappedTileID, worldSize) {
     const canonical = unwrappedTileID.canonical;
@@ -52370,7 +52431,9 @@ class Style extends performance$1.Evented {
         for (const id in this.sourceCaches) {
             if (params.layers && !includedSources[id])
                 continue;
-            sourceResults.push(queryRenderedFeatures(this.sourceCaches[id], this._layers, serializedLayers, queryGeometry, paramsStrict, transform));
+            sourceResults.push(queryRenderedFeatures(this.sourceCaches[id], this._layers, serializedLayers, queryGeometry, paramsStrict, transform, this.map.terrain ?
+                (id, x, y) => this.map.terrain.getElevation(id, x, y) :
+                undefined));
         }
         if (this.placement) {
             // If a placement has run, query against its CollisionIndex
@@ -60830,13 +60893,12 @@ class Camera extends performance$1.Evented {
         return bearing;
     }
     /**
-     * Get the elevation difference between a given point
-     * and a point that is currently in the middle of the screen.
-     * This method should be used for proper positioning of custom 3d objects, as explained [here](https://maplibre.org/maplibre-gl-js/docs/examples/add-3d-model-with-terrain/)
+     * Gets the elevation at a given location, in meters above sea level.
      * Returns null if terrain is not enabled.
-     * This method is subject to change in Maplibre GL JS v5.
+     * If terrain is enabled with some exaggeration value, the value returned here will be reflective of (multiplied by) that exaggeration value.
+     * This method should be used for proper positioning of custom 3d objects, as explained [here](https://maplibre.org/maplibre-gl-js/docs/examples/add-3d-model-with-terrain/)
      * @param lngLatLike - [x,y] or LngLat coordinates of the location
-     * @returns elevation offset in meters
+     * @returns elevation in meters
      */
     queryTerrainElevation(lngLatLike) {
         if (!this.terrain) {
@@ -60940,7 +61002,7 @@ class AttributionControl {
         this._map.off('drag', this._updateCompactMinimize);
         this._map = undefined;
         this._compact = undefined;
-        this._sanitizedAttributionHTML = undefined;
+        this._attribHTML = undefined;
     }
     _setElementTitle(element, title) {
         const str = this._map._getUIString(`AttributionControl.${title}`);
@@ -60993,11 +61055,11 @@ class AttributionControl {
         });
         // check if attribution string is different to minimize DOM changes
         const attribHTML = attributions.join(' | ');
-        if (attribHTML === this._sanitizedAttributionHTML)
+        if (attribHTML === this._attribHTML)
             return;
-        this._sanitizedAttributionHTML = DOM.sanitize(attribHTML);
+        this._attribHTML = attribHTML;
         if (attributions.length) {
-            this._innerContainer.innerHTML = this._sanitizedAttributionHTML;
+            this._innerContainer.innerHTML = DOM.sanitize(attribHTML);
             this._container.classList.remove('maplibregl-attrib-empty');
         }
         else {
@@ -61218,25 +61280,42 @@ class TerrainSourceCache extends performance$1.Evented {
      * @param tileID - the tile to look for
      * @returns the tiles that were found
      */
-    getTerrainCoords(tileID) {
+    getTerrainCoords(tileID, terrainTileRanges) {
+        if (terrainTileRanges) {
+            return this._getTerrainCoordsForTileRanges(tileID, terrainTileRanges);
+        }
+        else {
+            return this._getTerrainCoordsForRegularTile(tileID);
+        }
+    }
+    /**
+     * Searches for the corresponding current renderable terrain-tiles.
+     * Includes terrain tiles that are either:
+     * - the same as the tileID
+     * - a parent of the tileID
+     * - a child of the tileID
+     * @param tileID - the tile to look for
+     * @returns the tiles that were found
+     */
+    _getTerrainCoordsForRegularTile(tileID) {
         const coords = {};
         for (const key of this._renderableTilesKeys) {
-            const _tileID = this._tiles[key].tileID;
+            const terrainTileID = this._tiles[key].tileID;
             const coord = tileID.clone();
             const mat = performance$1.createMat4f64();
-            if (_tileID.canonical.equals(tileID.canonical)) {
+            if (terrainTileID.canonical.equals(tileID.canonical)) {
                 performance$1.ortho(mat, 0, performance$1.EXTENT, performance$1.EXTENT, 0, 0, 1);
             }
-            else if (_tileID.canonical.isChildOf(tileID.canonical)) {
-                const dz = _tileID.canonical.z - tileID.canonical.z;
-                const dx = _tileID.canonical.x - (_tileID.canonical.x >> dz << dz);
-                const dy = _tileID.canonical.y - (_tileID.canonical.y >> dz << dz);
+            else if (terrainTileID.canonical.isChildOf(tileID.canonical)) {
+                const dz = terrainTileID.canonical.z - tileID.canonical.z;
+                const dx = terrainTileID.canonical.x - (terrainTileID.canonical.x >> dz << dz);
+                const dy = terrainTileID.canonical.y - (terrainTileID.canonical.y >> dz << dz);
                 const size = performance$1.EXTENT >> dz;
                 performance$1.ortho(mat, 0, size, size, 0, 0, 1); // Note: we are using `size` instead of `EXTENT` here
                 performance$1.translate(mat, mat, [-dx * size, -dy * size, 0]);
             }
-            else if (tileID.canonical.isChildOf(_tileID.canonical)) {
-                const dz = tileID.canonical.z - _tileID.canonical.z;
+            else if (tileID.canonical.isChildOf(terrainTileID.canonical)) {
+                const dz = tileID.canonical.z - terrainTileID.canonical.z;
                 const dx = tileID.canonical.x - (tileID.canonical.x >> dz << dz);
                 const dy = tileID.canonical.y - (tileID.canonical.y >> dz << dz);
                 const size = performance$1.EXTENT >> dz;
@@ -61246,6 +61325,56 @@ class TerrainSourceCache extends performance$1.Evented {
             }
             else {
                 continue;
+            }
+            coord.terrainRttPosMatrix32f = new Float32Array(mat);
+            coords[key] = coord;
+        }
+        return coords;
+    }
+    /**
+     * Searches for the corresponding current renderable terrain-tiles.
+     * Includes terrain tiles that are within terrain tile ranges.
+     * @param tileID - the tile to look for
+     * @returns the tiles that were found
+     */
+    _getTerrainCoordsForTileRanges(tileID, terrainTileRanges) {
+        const coords = {};
+        for (const key of this._renderableTilesKeys) {
+            const terrainTileID = this._tiles[key].tileID;
+            if (!this._isWithinTileRanges(terrainTileID, terrainTileRanges)) {
+                continue;
+            }
+            const coord = tileID.clone();
+            const mat = performance$1.createMat4f64();
+            if (terrainTileID.canonical.z === tileID.canonical.z) {
+                const dx = tileID.canonical.x - terrainTileID.canonical.x;
+                const dy = tileID.canonical.y - terrainTileID.canonical.y;
+                performance$1.ortho(mat, 0, performance$1.EXTENT, performance$1.EXTENT, 0, 0, 1);
+                performance$1.translate(mat, mat, [dx * performance$1.EXTENT, dy * performance$1.EXTENT, 0]);
+            }
+            else if (terrainTileID.canonical.z > tileID.canonical.z) {
+                const dz = terrainTileID.canonical.z - tileID.canonical.z;
+                // this translation is needed to project tileID to terrainTileID zoom level
+                const dx = terrainTileID.canonical.x - (terrainTileID.canonical.x >> dz << dz);
+                const dy = terrainTileID.canonical.y - (terrainTileID.canonical.y >> dz << dz);
+                // this translation is needed if terrainTileID is not a parent of tileID
+                const dx2 = tileID.canonical.x - (terrainTileID.canonical.x >> dz);
+                const dy2 = tileID.canonical.y - (terrainTileID.canonical.y >> dz);
+                const size = performance$1.EXTENT >> dz;
+                performance$1.ortho(mat, 0, size, size, 0, 0, 1);
+                performance$1.translate(mat, mat, [-dx * size + dx2 * performance$1.EXTENT, -dy * size + dy2 * performance$1.EXTENT, 0]);
+            }
+            else { // terrainTileID.canonical.z < tileID.canonical.z
+                const dz = tileID.canonical.z - terrainTileID.canonical.z;
+                // this translation is needed to project tileID to terrainTileID zoom level
+                const dx = tileID.canonical.x - (tileID.canonical.x >> dz << dz);
+                const dy = tileID.canonical.y - (tileID.canonical.y >> dz << dz);
+                // this translation is needed if terrainTileID is not a parent of tileID
+                const dx2 = (tileID.canonical.x >> dz) - terrainTileID.canonical.x;
+                const dy2 = (tileID.canonical.y >> dz) - terrainTileID.canonical.y;
+                const size = performance$1.EXTENT << dz;
+                performance$1.ortho(mat, 0, size, size, 0, 0, 1);
+                performance$1.translate(mat, mat, [dx * performance$1.EXTENT + dx2 * size, dy * performance$1.EXTENT + dy2 * size, 0]);
             }
             coord.terrainRttPosMatrix32f = new Float32Array(mat);
             coords[key] = coord;
@@ -61282,6 +61411,19 @@ class TerrainSourceCache extends performance$1.Evented {
      */
     anyTilesAfterTime(time = Date.now()) {
         return this._lastTilesetChange >= time;
+    }
+    /**
+     * Checks whether a tile is within the canonical tile ranges.
+     * @param tileID - Tile to check
+     * @param canonicalTileRanges - Canonical tile ranges
+     * @returns
+     */
+    _isWithinTileRanges(tileID, canonicalTileRanges) {
+        return canonicalTileRanges[tileID.canonical.z] &&
+            tileID.canonical.x >= canonicalTileRanges[tileID.canonical.z].minTileX &&
+            tileID.canonical.x <= canonicalTileRanges[tileID.canonical.z].maxTileX &&
+            tileID.canonical.y >= canonicalTileRanges[tileID.canonical.z].minTileY &&
+            tileID.canonical.y <= canonicalTileRanges[tileID.canonical.z].maxTileY;
     }
 }
 
@@ -61767,8 +61909,10 @@ class RenderToTexture {
         for (const id in style.sourceCaches) {
             this._coordsAscending[id] = {};
             const tileIDs = style.sourceCaches[id].getVisibleCoordinates();
+            const source = style.sourceCaches[id].getSource();
+            const terrainTileRanges = source instanceof ImageSource ? source.terrainTileRanges : null;
             for (const tileID of tileIDs) {
-                const keys = this.terrain.sourceCache.getTerrainCoords(tileID);
+                const keys = this.terrain.sourceCache.getTerrainCoords(tileID, terrainTileRanges);
                 for (const key in keys) {
                     if (!this._coordsAscending[id][key])
                         this._coordsAscending[id][key] = [];
@@ -63190,6 +63334,7 @@ let Map$1 = class Map extends Camera {
             this.transform.setMinElevationForCurrentTile(this.terrain.getMinTileElevationForLngLatZoom(this.transform.center, this.transform.tileZoom));
             this.transform.setElevation(this.terrain.getElevationForLngLatZoom(this.transform.center, this.transform.tileZoom));
             this._terrainDataCallback = e => {
+                var _a;
                 if (e.dataType === 'style') {
                     this.terrain.sourceCache.freeRtt();
                 }
@@ -63200,7 +63345,12 @@ let Map$1 = class Map extends Camera {
                             this.transform.setElevation(this.terrain.getElevationForLngLatZoom(this.transform.center, this.transform.tileZoom));
                         }
                     }
-                    this.terrain.sourceCache.freeRtt(e.tile.tileID);
+                    if (((_a = e.source) === null || _a === void 0 ? void 0 : _a.type) === 'image') {
+                        this.terrain.sourceCache.freeRtt();
+                    }
+                    else {
+                        this.terrain.sourceCache.freeRtt(e.tile.tileID);
+                    }
                 }
             };
             this.style.on('data', this._terrainDataCallback);
@@ -65084,7 +65234,9 @@ class Marker extends performance$1.Evented {
     addTo(map) {
         this.remove();
         this._map = map;
-        this._element.setAttribute('aria-label', map._getUIString('Marker.Title'));
+        if (!this._element.hasAttribute('aria-label')) {
+            this._element.setAttribute('aria-label', map._getUIString('Marker.Title'));
+        }
         map.getCanvasContainer().appendChild(this._element);
         map.on('move', this._update);
         map.on('moveend', this._update);
