@@ -1,226 +1,72 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset='utf-8' />
-    <title>MapLibre LOD control demo</title>
-    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
-    <script src='./maplibre-gl-dev.js'></script>
-    <link href='./maplibre-gl.css' rel='stylesheet' />
+    <title>Level of Detail Control</title>
+    <meta property="og:description" content="Modify how Level of Detail behaves at high pitch angles." />
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel='stylesheet' href='maplibre-gl.css' />
+    <script src='maplibre-gl-dev.js'></script>
     <style>
-        body { margin:0; padding:0; }
-        #map { position:absolute; top:0; bottom:0; width:100%; }
+        body { margin: 0; padding: 0; }
+        html, body, #map { height: 100%; }
+        .listing-group {
+            font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif;
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #fff;
+            background-color: gray;
+            padding: 10px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
-
-<div id='map'></div>
+<div id="map"></div>
+<table id="listing-group" class="listing-group">
+    <tr><td><label for="max-zoom-levels-slider">Max Zoom Levels On Screen</label></td><td><input type="range" id="max-zoom-levels-slider" min="1" max="11" step="1.0" value="9.0" /></td><td><span id="max-zoom-levels-value">9.0</span></td></tr>
+    <tr><td><label for="tile-count-ratio-slider">Tile Count Max/Min Ratio</label></td><td><input type="range" id="tile-count-ratio-slider" min="1" max="10" step="0.1" value="3.0" /></td><td><span id="tile-count-ratio-value">3.0</span></td></tr>
+</table>
 <script>
-var map = window.map = new maplibregl.Map({
-    container: 'map',
-    zoom: 6,
-    center: [170, -42],
-    pitch: 0,
-    renderWorldCopies: false,
-    hash: true,
-    style: {
-        version: 8,
-        sources: {
-            satellite: {
-                type: 'raster',
-                tiles: ['https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=c01jp93wy1d0hjwwpeksyf0fntz'],
-                tileSize: 256
-            },            
-            number: {
-                type: 'raster',
-                url: 'https://demotiles.maplibre.org/debug-tiles/number/tiles.json',
-                tileSize: 256
+    function setLodParamsFromUi() {
+        map.setSourceTileLodParams(document.getElementById('max-zoom-levels-slider').value, document.getElementById('tile-count-ratio-slider').value);
+        document.getElementById('max-zoom-levels-value').innerHTML = document.getElementById('max-zoom-levels-slider').value;
+        document.getElementById('tile-count-ratio-value').innerHTML = document.getElementById('tile-count-ratio-slider').value;
+    }
+    const map = (window.map = new maplibregl.Map({
+        container: 'map',
+        zoom: 12,
+        center: [0,0],
+        pitch: 77,
+        hash: true,
+        style: {
+            version: 8,
+            sources: {
+                numbers: {
+                    type: 'raster',
+                    url: 'https://demotiles.maplibre.org/debug-tiles/number/tiles.json',
+                    tileSize: 256,
+                    maxzoom: 19
+                }
             },
-            terrainSource: {
-                type: 'raster-dem',
-                tiles: ['https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/{z}/{x}/{y}.png?api=c01jp93wy1d0hjwwpeksyf0fntz&pipeline=terrain-rgb'],
-                tileSize: 256
-            },
+            layers: [
+                {
+                    id: 'numbers',
+                    type: 'raster',
+                    source: 'numbers'
+                }
+            ]
         },
-        
-        layers: [
-            {
-                id: 'number',
-                type: 'raster',
-                source: 'number'
-            }
-        ],
-        terrain: {
-            source: 'terrainSource',
-            exaggeration: 1
-        }
-    },
-    maxZoom: 18,
-    maxPitch: 85
-});
-
-class MaxZoomLevelsControl {
-    onAdd(map) {
-        this._map = map;
-        this._container = document.createElement('div');
-        this._container.className = 'maplibregl-ctrl';
-        let pb_label = document.createElement('span');
-        pb_label.innerHTML = "Max Zoom Levels = ";
-        let pb_value = document.createElement('span');
-        pb_value.innerHTML = window.MAX_ZOOM_LEVELS;
-        let pb_down = document.createElement('button');
-        pb_down.innerHTML = "-";
-        pb_down.onclick = (e) => {
-            if(window.MAX_ZOOM_LEVELS > 1) {
-                window.MAX_ZOOM_LEVELS -= 1.0;
-            }
-            pb_value.innerHTML = window.MAX_ZOOM_LEVELS;
-            this._map._update();
-        };
-        let pb_up = document.createElement('button');
-        pb_up.innerHTML = "+";
-        pb_up.onclick = (e) => {
-            if(window.MAX_ZOOM_LEVELS < 20) {
-                window.MAX_ZOOM_LEVELS += 1.0;
-            }
-            pb_value.innerHTML = window.MAX_ZOOM_LEVELS;
-            this._map._update();
-        };
-        this._container.appendChild(pb_label);
-        this._container.appendChild(pb_value);
-        this._container.appendChild(pb_down);
-        this._container.appendChild(pb_up);
-        return this._container;
-    }
-
-    onRemove() {
-        this._container.parentNode.removeChild(this._container);
-        this._map = undefined;
-    }
-}
-
-class TileCountRatioControl {
-    onAdd(map) {
-        this._map = map;
-        this._container = document.createElement('div');
-        this._container.className = 'maplibregl-ctrl';
-        let pb_label = document.createElement('span');
-        pb_label.innerHTML = "Tile Count Max/Min Ratio = ";
-        let pb_value = document.createElement('span');
-        pb_value.innerHTML = window.TILE_COUNT_RATIO;
-        let pb_down = document.createElement('button');
-        pb_down.innerHTML = "-";
-        pb_down.onclick = (e) => {
-            if(window.TILE_COUNT_RATIO > 1) {
-                window.TILE_COUNT_RATIO -= 0.25;
-            }
-            pb_value.innerHTML = window.TILE_COUNT_RATIO;
-            this._map._update();
-        };
-        let pb_up = document.createElement('button');
-        pb_up.innerHTML = "+";
-        pb_up.onclick = (e) => {
-            window.TILE_COUNT_RATIO += 0.25;
-            pb_value.innerHTML = window.TILE_COUNT_RATIO;
-            this._map._update();
-        };
-        this._container.appendChild(pb_label);
-        this._container.appendChild(pb_value);
-        this._container.appendChild(pb_down);
-        this._container.appendChild(pb_up);
-        return this._container;
-    }
-
-    onRemove() {
-        this._container.parentNode.removeChild(this._container);
-        this._map = undefined;
-    }
-}
-
-
-
-class SourceControl {
-    onAdd(map) {
-        this._map = map;
-        this._container = document.createElement('div');
-        this._container.className = 'maplibregl-ctrl';
-        let pb_switch = document.createElement('button');
-        pb_switch.innerHTML = "Switch to Satellite";
-        pb_switch.onclick = (e) => {
-            if (pb_switch.innerHTML == "Switch to Satellite") {
-                pb_switch.innerHTML = "Switch to Numbers";
-                map.addLayer({'id': 'satellite','type': 'raster','source': 'satellite'});
-                map.removeLayer("number");
-                this._map._update();
-            } else {
-                pb_switch.innerHTML = "Switch to Satellite";
-                map.addLayer({'id': 'number','type': 'raster','source': 'number'});
-                map.removeLayer("satellite");
-                this._map._update();
-            }
-        };
-        this._container.appendChild(pb_switch);
-        return this._container;
-    }
-
-    onRemove() {
-        this._container.parentNode.removeChild(this._container);
-        this._map = undefined;
-    }
-}
-
-
-class TileBoundariesControl {
-    onAdd(map) {
-        this._map = map;
-        map.showTileBoundaries = true;
-        this._container = document.createElement('div');
-        this._container.className = 'maplibregl-ctrl';
-        let pb_label = document.createElement('span');
-        pb_label.innerHTML = "Tile Boundaries: ";
-        let pb_switch = document.createElement('button');
-        pb_switch.innerHTML = "Hide";
-        pb_switch.onclick = (e) => {
-            if (pb_switch.innerHTML == "Hide") {
-                pb_switch.innerHTML = "Show";
-                this._map.showTileBoundaries = false;
-                this._map._update();
-            } else {
-                pb_switch.innerHTML = "Hide";
-                this._map.showTileBoundaries = true;
-                this._map._update();
-            }
-        };
-        this._container.appendChild(pb_label);
-        this._container.appendChild(pb_switch);
-        return this._container;
-    }
-
-    onRemove() {
-        this._container.parentNode.removeChild(this._container);
-        this._map = undefined;
-    }
-}
-
-map.addControl(new MaxZoomLevelsControl());
-map.addControl(new TileCountRatioControl());
-map.addControl(new SourceControl());
-map.addControl(new TileBoundariesControl());
-
-map.addControl(
-    new maplibregl.NavigationControl({
-        visualizePitch: true,
-        showZoom: true,
-        showCompass: true
-    })
-);
-map.addControl(
-    new maplibregl.TerrainControl({
-        source: 'terrainSource',
-        exaggeration: 1
-    })
-);
+        maxZoom: 22,
+        maxPitch: 85
+    }));
+    map.on('load', () => {
+        document.getElementById('max-zoom-levels-slider').addEventListener('change', setLodParamsFromUi);
+        document.getElementById('tile-count-ratio-slider').addEventListener('change', setLodParamsFromUi);
+        setLodParamsFromUi();
+    });
 
 </script>
-
 </body>
 </html>

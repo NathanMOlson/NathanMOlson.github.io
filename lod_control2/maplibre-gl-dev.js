@@ -42775,8 +42775,81 @@ class SourceFeatureState {
     }
 }
 
-window.MAX_ZOOM_LEVELS = 5.0;
-window.TILE_COUNT_RATIO = 3.0;
+/*
+* The maximum angle to use for the Mercator horizon. This must be less than 90
+* to prevent errors in `MercatorTransform::_calcMatrices()`. It shouldn't be too close
+* to 90, or the distance to the horizon will become very large, unnecessarily increasing
+* the number of tiles needed to render the map.
+*/
+const maxMercatorHorizonAngle = 89.25;
+/**
+ * Returns mercator coordinates in range 0..1 for given coordinates inside a specified tile.
+ * @param inTileX - X coordinate in tile units - range [0..EXTENT].
+ * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
+ * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
+ * @returns Mercator coordinates of the specified point in range [0..1].
+ */
+function tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID) {
+    const scale = 1.0 / (1 << canonicalTileID.z);
+    return new performance$1.MercatorCoordinate(inTileX / performance$1.EXTENT * scale + canonicalTileID.x * scale, inTileY / performance$1.EXTENT * scale + canonicalTileID.y * scale);
+}
+/**
+ * Returns LngLat for given in-tile coordinates and tile ID.
+ * @param inTileX - X coordinate in tile units - range [0..EXTENT].
+ * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
+ * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
+ */
+function tileCoordinatesToLocation(inTileX, inTileY, canonicalTileID) {
+    return tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID).toLngLat();
+}
+/**
+ * Convert from LngLat to world coordinates (Mercator coordinates scaled by world size).
+ * @param worldSize - Mercator world size computed from zoom level and tile size.
+ * @param lnglat - The location to convert.
+ * @returns Point
+ */
+function projectToWorldCoordinates(worldSize, lnglat) {
+    const lat = performance$1.clamp(lnglat.lat, -performance$1.MAX_VALID_LATITUDE, performance$1.MAX_VALID_LATITUDE);
+    return new performance$1.Point(performance$1.mercatorXfromLng(lnglat.lng) * worldSize, performance$1.mercatorYfromLat(lat) * worldSize);
+}
+/**
+ * Convert from world coordinates (mercator coordinates scaled by world size) to LngLat.
+ * @param worldSize - Mercator world size computed from zoom level and tile size.
+ * @param point - World coordinate.
+ * @returns LngLat
+ */
+function unprojectFromWorldCoordinates(worldSize, point) {
+    return new performance$1.MercatorCoordinate(point.x / worldSize, point.y / worldSize).toLngLat();
+}
+/**
+ * Calculate pixel height of the visible horizon in relation to map-center (e.g. height/2),
+ * multiplied by a static factor to simulate the earth-radius.
+ * The calculated value is the horizontal line from the camera-height to sea-level.
+ * @returns Horizon above center in pixels.
+ */
+function getMercatorHorizon(transform) {
+    return transform.cameraToCenterDistance * Math.min(Math.tan(performance$1.degreesToRadians(90 - transform.pitch)) * 0.85, Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch)));
+}
+function calculateTileMatrix(unwrappedTileID, worldSize) {
+    const canonical = unwrappedTileID.canonical;
+    const scale = worldSize / performance$1.zoomScale(canonical.z);
+    const unwrappedX = canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
+    const worldMatrix = performance$1.identity(new Float64Array(16));
+    performance$1.translate(worldMatrix, worldMatrix, [unwrappedX * scale, canonical.y * scale, 0]);
+    performance$1.scale(worldMatrix, worldMatrix, [scale / performance$1.EXTENT, scale / performance$1.EXTENT, 1]);
+    return worldMatrix;
+}
+function cameraMercatorCoordinateFromCenterAndRotation(center, elevation, pitch, bearing, distance) {
+    const centerMercator = performance$1.MercatorCoordinate.fromLngLat(center, elevation);
+    const mercUnitsPerMeter = performance$1.mercatorZfromAltitude(1, center.lat);
+    const dMercator = distance * mercUnitsPerMeter;
+    const dzMercator = dMercator * Math.cos(performance$1.degreesToRadians(pitch));
+    const dhMercator = Math.sqrt(dMercator * dMercator - dzMercator * dzMercator);
+    const dxMercator = dhMercator * Math.sin(performance$1.degreesToRadians(-bearing));
+    const dyMercator = dhMercator * Math.cos(performance$1.degreesToRadians(-bearing));
+    return new performance$1.MercatorCoordinate(centerMercator.x + dxMercator, centerMercator.y + dyMercator, centerMercator.z + dzMercator);
+}
+
 /**
  * A simple/heuristic function that returns whether the tile is visible under the current transform.
  * @returns an {@link IntersectionResult}.
@@ -42805,36 +42878,34 @@ function intCosXToP(p, x1, x2) {
     }
     return sum;
 }
-function calculateTileZoom(requestedCenterZoom, distanceToTile2D, distanceToTileZ, distanceToCenter3D, cameraVerticalFOV) {
-    /**
-    * Controls how tiles are loaded at high pitch angles. Higher numbers cause fewer, lower resolution
-    * tiles to be loaded. At 0, tiles are loaded with approximately constant screen X resolution.
-    * At 1, tiles are loaded with approximately constant screen area.
-    * At 2, tiles are loaded with approximately constant screen Y resolution.
-    */
-    //const pitchTileLoadingBehavior = window.TILE_ZOOM_RATE;
-    const pitchTileLoadingBehavior = 2 * ((1 - window.MAX_ZOOM_LEVELS) / Math.log2(Math.cos(performance$1.degreesToRadians(89.25)) / Math.cos(performance$1.degreesToRadians(89.25 - cameraVerticalFOV))) - 1);
-    const centerPitch = Math.acos(distanceToTileZ / distanceToCenter3D);
-    const tileCountPitch0 = 2 * intCosXToP(pitchTileLoadingBehavior - 1, 0, performance$1.degreesToRadians(cameraVerticalFOV / 2));
-    const highestPitch = Math.min(performance$1.degreesToRadians(89.25), centerPitch + performance$1.degreesToRadians(cameraVerticalFOV / 2));
-    const tileCount = intCosXToP(pitchTileLoadingBehavior - 1, highestPitch - performance$1.degreesToRadians(cameraVerticalFOV), highestPitch);
-    /**
-    * Controls how tiles are loaded at high pitch angles. Controls how different the distance to a tile must be (compared with the center point)
-    * before a new zoom level is requested. For example, if tileZoomDeadband = 1 and the center zoom is 14, tiles distant enough to be loaded at
-    * z13 will be loaded at z14, and tiles distant enough to be loaded at z14 will be loaded at z15. A higher number causes more tiles to be loaded
-    * at the center zoom level. This also results in more tiles being loaded overall.
-    */
-    // const tileZoomDeadband = window.TILE_ZOOM_DEADBAND;
-    const thisTilePitch = Math.atan(distanceToTile2D / distanceToTileZ);
-    const distanceToTile3D = Math.hypot(distanceToTile2D, distanceToTileZ);
-    // if distance to candidate tile is a tiny bit farther than distance to center,
-    // use the same zoom as the center. This is achieved by the scaling distance ratio by cos(fov/2)
-    // console.log(tileCountPitch0, tileCount, tileCount/tileCountPitch0, scaleZoom(Math.max(1,tileCount/tileCountPitch0/window.TILE_COUNT_RATIO))/2);
-    let thisTileDesiredZ = requestedCenterZoom - performance$1.scaleZoom(Math.max(1, tileCount / tileCountPitch0 / window.TILE_COUNT_RATIO)) / 2 + performance$1.scaleZoom(distanceToCenter3D / distanceToTile3D / Math.max(0.5, Math.cos(performance$1.degreesToRadians(cameraVerticalFOV / 2))));
-    thisTileDesiredZ += pitchTileLoadingBehavior * performance$1.scaleZoom(Math.cos(thisTilePitch)) / 2;
-    // thisTileDesiredZ = thisTileDesiredZ + clamp(requestedCenterZoom - thisTileDesiredZ, -tileZoomDeadband, tileZoomDeadband);
-    return thisTileDesiredZ;
+function createCalculateTileZoomFunction(maxZoomLevelsOnScreen, tileCountMaxMinRatio) {
+    return function (requestedCenterZoom, distanceToTile2D, distanceToTileZ, distanceToCenter3D, cameraVerticalFOV) {
+        /**
+        * Controls how tiles are loaded at high pitch angles. Higher numbers cause fewer, lower resolution
+        * tiles to be loaded. Calculate the value that will result in the selected number of zoom levels in
+        * the worst-case condition (when the horizon is at the top of the screen).
+        */
+        const pitchTileLoadingBehavior = 2 * ((1 - maxZoomLevelsOnScreen) /
+            performance$1.scaleZoom(Math.cos(performance$1.degreesToRadians(maxMercatorHorizonAngle)) /
+                Math.cos(performance$1.degreesToRadians(maxMercatorHorizonAngle - cameraVerticalFOV))) - 1);
+        const centerPitch = Math.acos(distanceToTileZ / distanceToCenter3D);
+        const tileCountPitch0 = 2 * intCosXToP(pitchTileLoadingBehavior - 1, 0, performance$1.degreesToRadians(cameraVerticalFOV / 2));
+        const highestPitch = Math.min(performance$1.degreesToRadians(maxMercatorHorizonAngle), centerPitch + performance$1.degreesToRadians(cameraVerticalFOV / 2));
+        const tileCount = intCosXToP(pitchTileLoadingBehavior - 1, highestPitch - performance$1.degreesToRadians(cameraVerticalFOV), highestPitch);
+        const thisTilePitch = Math.atan(distanceToTile2D / distanceToTileZ);
+        const distanceToTile3D = Math.hypot(distanceToTile2D, distanceToTileZ);
+        let thisTileDesiredZ = requestedCenterZoom -
+            performance$1.scaleZoom(Math.max(1, tileCount / tileCountPitch0 / tileCountMaxMinRatio)) / 2;
+        // if distance to candidate tile is a tiny bit farther than distance to center,
+        // use the same zoom as the center. This is achieved by the scaling distance ratio by cos(fov/2)
+        thisTileDesiredZ = thisTileDesiredZ + performance$1.scaleZoom(distanceToCenter3D / distanceToTile3D / Math.max(0.5, Math.cos(performance$1.degreesToRadians(cameraVerticalFOV / 2))));
+        thisTileDesiredZ += pitchTileLoadingBehavior * performance$1.scaleZoom(Math.cos(thisTilePitch)) / 2;
+        return thisTileDesiredZ;
+    };
 }
+const defaultMaxZoomLevelsOnScreen = 9.314;
+const defaultTileCountMaxMinRatio = 3.0;
+const calculateTileZoom = createCalculateTileZoomFunction(defaultMaxZoomLevelsOnScreen, defaultTileCountMaxMinRatio);
 /**
  * Return what zoom level of a tile source would most closely cover the tiles displayed by this transform.
  * @param options - The options, most importantly the source's tile size.
@@ -46996,82 +47067,6 @@ class MercatorProjection {
     setErrorQueryLatitudeDegrees(_value) {
         // Do nothing.
     }
-}
-
-/*
-* The maximum angle to use for the Mercator horizon. This must be less than 90
-* to prevent errors in `MercatorTransform::_calcMatrices()`. It shouldn't be too close
-* to 90, or the distance to the horizon will become very large, unnecessarily increasing
-* the number of tiles needed to render the map.
-*/
-const maxMercatorHorizonAngle = 89.25;
-/**
- * Returns mercator coordinates in range 0..1 for given coordinates inside a specified tile.
- * @param inTileX - X coordinate in tile units - range [0..EXTENT].
- * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
- * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
- * @returns Mercator coordinates of the specified point in range [0..1].
- */
-function tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID) {
-    const scale = 1.0 / (1 << canonicalTileID.z);
-    return new performance$1.MercatorCoordinate(inTileX / performance$1.EXTENT * scale + canonicalTileID.x * scale, inTileY / performance$1.EXTENT * scale + canonicalTileID.y * scale);
-}
-/**
- * Returns LngLat for given in-tile coordinates and tile ID.
- * @param inTileX - X coordinate in tile units - range [0..EXTENT].
- * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
- * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
- */
-function tileCoordinatesToLocation(inTileX, inTileY, canonicalTileID) {
-    return tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID).toLngLat();
-}
-/**
- * Convert from LngLat to world coordinates (Mercator coordinates scaled by world size).
- * @param worldSize - Mercator world size computed from zoom level and tile size.
- * @param lnglat - The location to convert.
- * @returns Point
- */
-function projectToWorldCoordinates(worldSize, lnglat) {
-    const lat = performance$1.clamp(lnglat.lat, -performance$1.MAX_VALID_LATITUDE, performance$1.MAX_VALID_LATITUDE);
-    return new performance$1.Point(performance$1.mercatorXfromLng(lnglat.lng) * worldSize, performance$1.mercatorYfromLat(lat) * worldSize);
-}
-/**
- * Convert from world coordinates (mercator coordinates scaled by world size) to LngLat.
- * @param worldSize - Mercator world size computed from zoom level and tile size.
- * @param point - World coordinate.
- * @returns LngLat
- */
-function unprojectFromWorldCoordinates(worldSize, point) {
-    return new performance$1.MercatorCoordinate(point.x / worldSize, point.y / worldSize).toLngLat();
-}
-/**
- * Calculate pixel height of the visible horizon in relation to map-center (e.g. height/2),
- * multiplied by a static factor to simulate the earth-radius.
- * The calculated value is the horizontal line from the camera-height to sea-level.
- * @returns Horizon above center in pixels.
- */
-function getMercatorHorizon(transform) {
-    return transform.cameraToCenterDistance *
-        Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch));
-}
-function calculateTileMatrix(unwrappedTileID, worldSize) {
-    const canonical = unwrappedTileID.canonical;
-    const scale = worldSize / performance$1.zoomScale(canonical.z);
-    const unwrappedX = canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
-    const worldMatrix = performance$1.identity(new Float64Array(16));
-    performance$1.translate(worldMatrix, worldMatrix, [unwrappedX * scale, canonical.y * scale, 0]);
-    performance$1.scale(worldMatrix, worldMatrix, [scale / performance$1.EXTENT, scale / performance$1.EXTENT, 1]);
-    return worldMatrix;
-}
-function cameraMercatorCoordinateFromCenterAndRotation(center, elevation, pitch, bearing, distance) {
-    const centerMercator = performance$1.MercatorCoordinate.fromLngLat(center, elevation);
-    const mercUnitsPerMeter = performance$1.mercatorZfromAltitude(1, center.lat);
-    const dMercator = distance * mercUnitsPerMeter;
-    const dzMercator = dMercator * Math.cos(performance$1.degreesToRadians(pitch));
-    const dhMercator = Math.sqrt(dMercator * dMercator - dzMercator * dzMercator);
-    const dxMercator = dhMercator * Math.sin(performance$1.degreesToRadians(-bearing));
-    const dyMercator = dhMercator * Math.cos(performance$1.degreesToRadians(-bearing));
-    return new performance$1.MercatorCoordinate(centerMercator.x + dxMercator, centerMercator.y + dyMercator, centerMercator.z + dzMercator);
 }
 
 /**
@@ -63430,6 +63425,43 @@ let Map$1 = class Map extends Camera {
      */
     getSource(id) {
         return this.style.getSource(id);
+    }
+    /**
+     * Change the tile LOD behavior of the specified source. These parameters have no effect when
+     * pitch == 0, and the largest effect when the horizon is visible on screen.
+     *
+     * @param maxZoomLevelsOnScreen - The maximum number of distinct zoom levels allowed on screen at a time.
+     * There will generally be fewer zoom levels on the screen, the maximum can only be reached when the horizon
+     * is at the top of the screen. Increasing the maximum number of zoom levels causes the zoom level to decay
+     * faster toward the horizon.
+     * @param tileCountMaxMinRatio - The ratio of the maximum number of tiles loaded (at high pitch) to the minimum
+     * number of tiles loaded. Increasing this ratio allows more tiles to be loaded at high pitch angles. If the ratio
+     * would otherwise be exceeded, the zoom level is reduced uniformly to keep the number of tiles within the limit.
+     * @param id - The ID of the source to set tile LOD parameters for. All sources will be updated if unspecified.
+     * @returns True is success, false if failure (for example if the ID
+     * corresponds to no existing sources).
+     * @example
+     * ```ts
+     * let success = map.setSourceTileLodParams(4.0, 3.0, 'terrain');
+     * ```
+     * @see [Modify Level of Detail behavior](https://maplibre.org/maplibre-gl-js/docs/examples/lod-control/)
+
+     */
+    setSourceTileLodParams(maxZoomLevelsOnScreen, tileCountMaxMinRatio, id) {
+        if (id) {
+            const source = this.getSource(id);
+            if (!source) {
+                return false;
+            }
+            source.calculateTileZoom = createCalculateTileZoomFunction(Math.max(1, maxZoomLevelsOnScreen), Math.max(1, tileCountMaxMinRatio));
+        }
+        else {
+            for (const id in this.style.sourceCaches) {
+                this.style.sourceCaches[id].getSource().calculateTileZoom = createCalculateTileZoomFunction(Math.max(1, maxZoomLevelsOnScreen), Math.max(1, tileCountMaxMinRatio));
+            }
+        }
+        this._update(true);
+        return true;
     }
     /**
      * Add an image to the style. This image can be displayed on the map like any other icon in the style's
