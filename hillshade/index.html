@@ -19,14 +19,69 @@
             bottom: 0;
             width: 100%;
         }
+        .listing-group {
+            font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif;
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #fff;
+            background-color: gray;
+            padding: 10px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 
 <body>
 
     <div id='map'></div>
+    <table id="listing-group" class="listing-group">
+        <tr><td><label for="background-color-picker">background-color</label></td><td><input type="color" id="background-color-picker" value="#808080" style="width: 100%"/></td></tr>
+        <tr><td><label for="hillshade-highlight-color-picker">hillshade-highlight-color</label></td><td><input type="color" id="hillshade-highlight-color-picker" value="#FFFFFF" style="width: 100%"/></td></tr>
+        <tr><td><label for="hillshade-highlight-opacity-slider">highlight opacity</label></td><td><input type="range" id="hillshade-highlight-opacity-slider" min="0" max="1" step="0.01" value="1.0" /></td></tr>
+        <tr><td><label for="hillshade-shadow-color-picker">hillshade-shadow-color</label></td><td><input type="color" id="hillshade-shadow-color-picker" value="#000000" style="width: 100%"/></td></tr>
+        <tr><td><label for="hillshade-shadow-opacity-slider">shadow opacity</label></td><td><input type="range" id="hillshade-shadow-opacity-slider" min="0" max="1" step="0.01" value="1.0" /></td></tr>
+        <tr><td><label for="hillshade-accent-color-picker">hillshade-accent-color</label></td><td><input type="color" id="hillshade-accent-color-picker" value="#000000" style="width: 100%"/></td></tr>
+        <tr><td><label for="hillshade-accent-opacity-slider">accent opacity</label></td><td><input type="range" id="hillshade-accent-opacity-slider" min="0" max="1" step="0.01" value="1.0" /></td></tr>
+        <tr><td><label for="hillshade-illumination-altitude-slider">hillshade-illumination-altitude</label></td><td><input type="range" id="hillshade-illumination-altitude-slider" min="0" max="90" step="1" value="45" /></td></tr>
+        
+        <tr><td>hillshade-method<br></td><td>
+            <select id="method-selector">
+                <option value="standard">standard</option>
+                <option value="basic">basic</option>
+                <option value="combined">combined</option>
+                <option value="igor">igor</option>
+                <option value="multidirectional">multidirectional</option>
+            </select>
+        </td></tr>
+    </table>
     <script>
-        var map = window.map = new maplibregl.Map({
+        function setHillshadeFromUi() {
+            const getColor = (name) => {
+                const v = document.getElementById(`hillshade-${name}-color-picker`).value;
+                const o = +document.getElementById(`hillshade-${name}-opacity-slider`).value;
+                return v + Math.round(255 * o).toString(16).padStart(2, '0');
+            }
+
+            try {
+                map.removeLayer('background');
+            } catch (e) { }
+            styles['background'].paint['background-color'] = document.getElementById('background-color-picker').value;
+            map.addLayer(styles['background']);
+            try {
+                map.removeLayer('hillshade');
+            } catch (e) { }
+            const method = document.getElementById('method-selector').value;
+            if (method != 'multidirectional') {
+                styles[method].paint['hillshade-shadow-color'] = getColor('shadow');
+                styles[method].paint['hillshade-highlight-color'] = getColor('highlight');
+                styles[method].paint['hillshade-accent-color'] = getColor('accent');
+            }
+            styles[method].paint['hillshade-illumination-altitude'] = +document.getElementById('hillshade-illumination-altitude-slider').value;
+            map.addLayer(styles[method]);
+        }
+
+        const map = window.map = new maplibregl.Map({
             container: 'map',
             zoom: 6,
             center: [170, -42],
@@ -80,9 +135,6 @@
             type: 'hillshade',
             source: 'hillshadeSource',
             paint: {
-                'hillshade-shadow-color': '#000000',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-accent-color': '#000000',
                 'hillshade-method': 'igor'
             }
         };
@@ -91,9 +143,6 @@
             type: 'hillshade',
             source: 'hillshadeSource',
             paint: {
-                'hillshade-shadow-color': '#000000',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-accent-color': '#000000',
                 'hillshade-method': 'combined'
             }
         };
@@ -102,9 +151,6 @@
             type: 'hillshade',
             source: 'hillshadeSource',
             paint: {
-                'hillshade-shadow-color': '#000000',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-accent-color': '#000000',
                 'hillshade-method': 'standard'
             }
         };
@@ -113,9 +159,6 @@
             type: 'hillshade',
             source: 'hillshadeSource',
             paint: {
-                'hillshade-shadow-color': '#000000',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-accent-color': '#000000',
                 'hillshade-method': 'basic'
             }
         };
@@ -124,295 +167,24 @@
             type: 'hillshade',
             source: 'hillshadeSource',
             paint: {
-                'hillshade-shadow-color': '#000000',
-                'hillshade-highlight-color': '#FFFFFF',
-                'hillshade-accent-color': '#000000',
+                'hillshade-highlight-color': ['#FF4000', '#FFFF00', '#40ff00', '#00FF80'],
+                'hillshade-shadow-color': ['#00bfff', '#0000ff', '#bf00ff', '#FF0080'],
+                'hillshade-illumination-direction': [270,315,0,45],
                 'hillshade-method': 'multidirectional'
             }
         };
 
-        let alt = 45;
-
-        class HillshadeControl {
-            onAdd(map) {
-                this._map = map;
-                this._container = document.createElement('div');
-                this._container.className = 'maplibregl-ctrl';
-
-                let input_igor = document.createElement('input');
-                input_igor.setAttribute('type', 'radio');
-                input_igor.setAttribute('name', 'method');
-                input_igor.setAttribute('id', 'igor');
-                input_igor.setAttribute('value', 'igor');
-                let value_igor = document.createElement('label');
-                value_igor.setAttribute('for', 'igor');
-                value_igor.innerHTML = "Igor";
-
-                let input_combined = document.createElement('input');
-                input_combined.setAttribute('type', 'radio');
-                input_combined.setAttribute('name', 'method');
-                input_combined.setAttribute('id', 'combined');
-                input_combined.setAttribute('value', 'combined');
-                let value_combined = document.createElement('label');
-                value_combined.setAttribute('for', 'combined');
-                value_combined.innerHTML = "combined";
-
-                let input_standard = document.createElement('input');
-                input_standard.setAttribute('type', 'radio');
-                input_standard.setAttribute('name', 'method');
-                input_standard.setAttribute('id', 'standard');
-                input_standard.setAttribute('value', 'standard');
-                let value_standard = document.createElement('label');
-                value_standard.setAttribute('for', 'standard');
-                value_standard.innerHTML = "standard";
-
-                let input_basic = document.createElement('input');
-                input_basic.setAttribute('type', 'radio');
-                input_basic.setAttribute('name', 'method');
-                input_basic.setAttribute('id', 'basic');
-                input_basic.setAttribute('value', 'basic');
-                let value_basic = document.createElement('label');
-                value_basic.setAttribute('for', 'basic');
-                value_basic.innerHTML = "basic";
-
-                let input_multidirectional = document.createElement('input');
-                input_multidirectional.setAttribute('type', 'radio');
-                input_multidirectional.setAttribute('name', 'method');
-                input_multidirectional.setAttribute('id', 'multidirectional');
-                input_multidirectional.setAttribute('value', 'multidirectional');
-                let value_multidirectional = document.createElement('label');
-                value_multidirectional.setAttribute('for', 'multidirectional');
-                value_multidirectional.innerHTML = "multidirectional";
-
-
-                input_standard.oninput = (e) => {
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles['standard'].paint['hillshade-illumination-altitude'] = alt;
-                    map.addLayer(styles['standard']);
-                }
-
-                input_igor.oninput = (e) => {
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles['igor'].paint['hillshade-illumination-altitude'] = alt;
-                    map.addLayer(styles['igor']);
-                }
-
-                input_combined.oninput = (e) => {
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles['combined'].paint['hillshade-illumination-altitude'] = alt;
-                    map.addLayer(styles['combined']);
-                }
-
-                input_multidirectional.oninput = (e) => {
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles['multidirectional'].paint['hillshade-illumination-altitude'] = alt;
-                    map.addLayer(styles['multidirectional']);
-                }
-
-                input_basic.oninput = (e) => {
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles['basic'].paint['hillshade-illumination-altitude'] = alt;
-                    map.addLayer(styles['basic']);
-                }
-
-                this._container.appendChild(input_standard);
-                this._container.appendChild(value_standard);
-                this._container.appendChild(input_combined);
-                this._container.appendChild(value_combined);
-                this._container.appendChild(input_igor);
-                this._container.appendChild(value_igor);
-                this._container.appendChild(input_basic);
-                this._container.appendChild(value_basic);
-                this._container.appendChild(input_multidirectional);
-                this._container.appendChild(value_multidirectional);
-                return this._container;
-            }
-
-            onRemove() {
-                this._container.parentNode.removeChild(this._container);
-                this._map = undefined;
-            }
-        }
-
-        class IlluminationAltitudeControl {
-            onAdd(map) {
-                this._map = map;
-                this._container = document.createElement('div');
-                this._container.className = 'maplibregl-ctrl';
-                let pb_label = document.createElement('span');
-                pb_label.innerHTML = "Illumination Altitude = ";
-                let pb_value = document.createElement('span');
-                pb_value.innerHTML = alt;
-                let pb_down = document.createElement('button');
-                pb_down.innerHTML = "-";
-                pb_down.onclick = (e) => {
-                    if (alt >= 5) {
-                        alt -= 5;
-                        pb_value.innerHTML = alt;
-                        let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
-                        try {
-                            map.removeLayer('hillshade');
-                        } catch (e) { }
-                        styles[method].paint['hillshade-illumination-altitude'] = alt;
-                        map.addLayer(styles[method]);
-
-                    }
-                };
-                let pb_up = document.createElement('button');
-                pb_up.innerHTML = "+";
-                pb_up.onclick = (e) => {
-                    if (alt <= 85) {
-                        alt += 5;
-                        pb_value.innerHTML = alt;
-                        let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
-                        try {
-                            map.removeLayer('hillshade');
-                        } catch (e) { }
-                        styles[method].paint['hillshade-illumination-altitude'] = alt;
-                        map.addLayer(styles[method]);
-                    }
-                };
-                this._container.appendChild(pb_label);
-                this._container.appendChild(pb_value);
-                this._container.appendChild(pb_down);
-                this._container.appendChild(pb_up);
-                return this._container;
-            }
-
-            onRemove() {
-                this._container.parentNode.removeChild(this._container);
-                this._map = undefined;
-            }
-        }
-
-        class HillshadeColorControl {
-            onAdd(map) {
-                this._map = map;
-                this._container = document.createElement('div');
-                this._container.className = 'maplibregl-ctrl';
-
-                let createLabel = (name) => {
-                    let label = document.createElement('span');
-                    label.innerHTML = name + ": ";
-                    return label;
-                }
-
-                let background_label = createLabel("Background");
-                let background_colorpicker = document.createElement('input');
-                background_colorpicker.setAttribute('type', 'color');
-                background_colorpicker.setAttribute('value', '#808080');
-
-                let colorpickers = {};
-                let opacities = {};
-
-                let createColorPicker = (name) => {
-                    colorpickers[name] = document.createElement('input');
-                    colorpickers[name].setAttribute('type', 'color');
-                    opacities[name] = document.createElement('input');
-                    opacities[name].setAttribute('type', 'range');
-                    opacities[name].setAttribute('min', '0');
-                    opacities[name].setAttribute('max', '1');
-                    opacities[name].setAttribute('step', '0.01');
-                }
-
-                createColorPicker('shadow');
-                createColorPicker('highlight');
-                createColorPicker('accent');
-
-                colorpickers['shadow'].setAttribute('value', '#000000');
-                colorpickers['highlight'].setAttribute('value', '#FFFFFF');
-                colorpickers['accent'].setAttribute('value', '#000000');
-                opacities['shadow'].setAttribute('value', 1);
-                opacities['highlight'].setAttribute('value', 1);
-                opacities['accent'].setAttribute('value', 1);
-
-                let shadow_label = createLabel("Shadow");
-                let highlight_label = createLabel("Highlight");
-                let accent_label = createLabel("Accent");
-
-                let getColor = (name) => {
-                    const v = colorpickers[name].value;
-                    const o = opacities[name].value;
-                    return v + Math.round(255 * o).toString(16).padStart(2, '0');
-                }
-
-                let setColors = () => {
-                    try {
-                        map.removeLayer('background');
-                    } catch (e) { }
-                    styles['background'].paint['background-color'] = background_colorpicker.value;
-                    map.addLayer(styles['background']);
-                    let method = map.getLayer('hillshade').getPaintProperty('hillshade-method');
-                    try {
-                        map.removeLayer('hillshade');
-                    } catch (e) { }
-                    styles[method].paint['hillshade-shadow-color'] = getColor('shadow');
-                    styles[method].paint['hillshade-highlight-color'] = getColor('highlight');
-                    styles[method].paint['hillshade-accent-color'] = getColor('accent');
-                    map.addLayer(styles[method]);
-                }
-                background_colorpicker.onchange = (e) => {
-                    setColors();
-                }
-                colorpickers['shadow'].onchange = (e) => {
-                    setColors();
-                }
-                colorpickers['highlight'].onchange = (e) => {
-                    setColors();
-                }
-                colorpickers['accent'].onchange = (e) => {
-                    setColors();
-                }
-                opacities['shadow'].onchange = (e) => {
-                    setColors();
-                }
-                opacities['highlight'].onchange = (e) => {
-                    setColors();
-                }
-                opacities['accent'].onchange = (e) => {
-                    setColors();
-                }
-
-                let newline = document.createElement('p');
-
-                this._container.appendChild(background_label);
-                this._container.appendChild(background_colorpicker);
-                this._container.appendChild(newline);
-                this._container.appendChild(shadow_label);
-                this._container.appendChild(colorpickers['shadow']);
-                this._container.appendChild(opacities['shadow']);
-                this._container.appendChild(newline.cloneNode());
-                this._container.appendChild(highlight_label);
-                this._container.appendChild(colorpickers['highlight']);
-                this._container.appendChild(opacities['highlight']);
-                this._container.appendChild(newline.cloneNode());
-                this._container.appendChild(accent_label);
-                this._container.appendChild(colorpickers['accent']);
-                this._container.appendChild(opacities['accent']);
-                return this._container;
-            }
-
-            onRemove() {
-                this._container.parentNode.removeChild(this._container);
-                this._map = undefined;
-            }
-        }
-
-        map.addControl(new HillshadeControl());
-        map.addControl(new IlluminationAltitudeControl());
-        map.addControl(new HillshadeColorControl());
         map.on('load', () => {
-            document.getElementById('standard').click();
+            document.getElementById('background-color-picker').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-highlight-color-picker').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-shadow-color-picker').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-accent-color-picker').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-highlight-opacity-slider').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-shadow-opacity-slider').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-accent-opacity-slider').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('hillshade-illumination-altitude-slider').addEventListener('change', setHillshadeFromUi);
+            document.getElementById('method-selector').addEventListener('change', setHillshadeFromUi);
+            setHillshadeFromUi();
         });
 
     </script>

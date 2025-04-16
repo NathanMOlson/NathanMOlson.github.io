@@ -1,6 +1,6 @@
 /**
  * MapLibre GL JS
- * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.3.0/LICENSE.txt
+ * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.3.1/LICENSE.txt
  */
 (function (global, factory) {
 typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
@@ -12709,7 +12709,7 @@ var paint_raster = {
 };
 var paint_hillshade = {
 	"hillshade-illumination-direction": {
-		type: "number",
+		type: "numberArray",
 		"default": 335,
 		minimum: 0,
 		maximum: 359,
@@ -12723,7 +12723,7 @@ var paint_hillshade = {
 		"property-type": "data-constant"
 	},
 	"hillshade-illumination-altitude": {
-		type: "number",
+		type: "numberArray",
 		"default": 45,
 		minimum: 0,
 		maximum: 90,
@@ -12768,7 +12768,7 @@ var paint_hillshade = {
 		"property-type": "data-constant"
 	},
 	"hillshade-shadow-color": {
-		type: "color",
+		type: "colorArray",
 		"default": "#000000",
 		transition: true,
 		expression: {
@@ -12780,7 +12780,7 @@ var paint_hillshade = {
 		"property-type": "data-constant"
 	},
 	"hillshade-highlight-color": {
-		type: "color",
+		type: "colorArray",
 		"default": "#FFFFFF",
 		transition: true,
 		expression: {
@@ -13601,6 +13601,8 @@ const ErrorType = { kind: 'error' };
 const CollatorType = { kind: 'collator' };
 const FormattedType = { kind: 'formatted' };
 const PaddingType = { kind: 'padding' };
+const ColorArrayType = { kind: 'colorArray' };
+const NumberArrayType = { kind: 'numberArray' };
 const ResolvedImageType = { kind: 'resolvedImage' };
 const VariableAnchorOffsetCollectionType = { kind: 'variableAnchorOffsetCollection' };
 function array(itemType, N) {
@@ -13632,6 +13634,8 @@ const valueMemberTypes = [
     ObjectType,
     array(ValueType),
     PaddingType,
+    NumberArrayType,
+    ColorArrayType,
     ResolvedImageType,
     VariableAnchorOffsetCollectionType
 ];
@@ -14410,6 +14414,103 @@ class Padding {
     }
 }
 
+/**
+ * An array of numbers. Create instances from
+ * bare arrays or numeric values using the static method `NumberArray.parse`.
+ * @private
+ */
+class NumberArray {
+    constructor(values) {
+        this.values = values.slice();
+    }
+    /**
+     * Numeric NumberArray values
+     * @param input A NumberArray value
+     * @returns A `NumberArray` instance, or `undefined` if the input is not a valid NumberArray value.
+     */
+    static parse(input) {
+        if (input instanceof NumberArray) {
+            return input;
+        }
+        // Backwards compatibility (e.g. hillshade-illumination-direction): bare number is treated the same as array with single value.
+        if (typeof input === 'number') {
+            return new NumberArray([input]);
+        }
+        if (!Array.isArray(input)) {
+            return undefined;
+        }
+        for (const val of input) {
+            if (typeof val !== 'number') {
+                return undefined;
+            }
+        }
+        return new NumberArray(input);
+    }
+    toString() {
+        return JSON.stringify(this.values);
+    }
+    static interpolate(from, to, t) {
+        return new NumberArray(interpolateArray(from.values, to.values, t));
+    }
+}
+
+/**
+ * An array of colors. Create instances from
+ * bare arrays or strings using the static method `ColorArray.parse`.
+ * @private
+ */
+class ColorArray {
+    constructor(values) {
+        this.values = values.slice();
+    }
+    /**
+     * ColorArray values
+     * @param input A ColorArray value
+     * @returns A `ColorArray` instance, or `undefined` if the input is not a valid ColorArray value.
+     */
+    static parse(input) {
+        if (input instanceof ColorArray) {
+            return input;
+        }
+        // Backwards compatibility (e.g. hillshade-shadow-color): bare Color is treated the same as array with single value.
+        if (typeof input === 'string') {
+            const parsed_val = Color.parse(input);
+            if (!parsed_val) {
+                return undefined;
+            }
+            return new ColorArray([parsed_val]);
+        }
+        if (!Array.isArray(input)) {
+            return undefined;
+        }
+        const colors = [];
+        for (const val of input) {
+            if (typeof val !== 'string') {
+                return undefined;
+            }
+            const parsed_val = Color.parse(val);
+            if (!parsed_val) {
+                return undefined;
+            }
+            colors.push(parsed_val);
+        }
+        return new ColorArray(colors);
+    }
+    toString() {
+        return JSON.stringify(this.values);
+    }
+    static interpolate(from, to, t, spaceKey = 'rgb') {
+        const colors = [];
+        if (from.values.length != to.values.length) {
+            throw new Error(`colorArray: Arrays have mismatched length (${from.values.length} vs. ${to.values.length}), cannot interpolate.`);
+        }
+        for (let i = 0; i < from.values.length; i++) {
+            colors.push(Color.interpolate(from.values[i], to.values[i], t, spaceKey));
+        }
+        return new ColorArray(colors);
+    }
+}
+
 class RuntimeError extends Error {
     constructor(message) {
         super(message);
@@ -14541,6 +14642,8 @@ function isValue(mixed) {
         mixed instanceof Collator ||
         mixed instanceof Formatted ||
         mixed instanceof Padding ||
+        mixed instanceof NumberArray ||
+        mixed instanceof ColorArray ||
         mixed instanceof VariableAnchorOffsetCollection ||
         mixed instanceof ResolvedImage) {
         return true;
@@ -14593,6 +14696,12 @@ function typeOf(value) {
     else if (value instanceof Padding) {
         return PaddingType;
     }
+    else if (value instanceof NumberArray) {
+        return NumberArrayType;
+    }
+    else if (value instanceof ColorArray) {
+        return ColorArrayType;
+    }
     else if (value instanceof VariableAnchorOffsetCollection) {
         return VariableAnchorOffsetCollectionType;
     }
@@ -14629,7 +14738,7 @@ function valueToString(value) {
     else if (type === 'string' || type === 'number' || type === 'boolean') {
         return String(value);
     }
-    else if (value instanceof Color || value instanceof ProjectionDefinition || value instanceof Formatted || value instanceof Padding || value instanceof VariableAnchorOffsetCollection || value instanceof ResolvedImage) {
+    else if (value instanceof Color || value instanceof ProjectionDefinition || value instanceof Formatted || value instanceof Padding || value instanceof NumberArray || value instanceof ColorArray || value instanceof VariableAnchorOffsetCollection || value instanceof ResolvedImage) {
         return value.toString();
     }
     else {
@@ -14825,6 +14934,28 @@ class Coercion {
                 }
                 throw new RuntimeError(`Could not parse padding from value '${typeof input === 'string' ? input : JSON.stringify(input)}'`);
             }
+            case 'numberArray': {
+                let input;
+                for (const arg of this.args) {
+                    input = arg.evaluate(ctx);
+                    const val = NumberArray.parse(input);
+                    if (val) {
+                        return val;
+                    }
+                }
+                throw new RuntimeError(`Could not parse numberArray from value '${typeof input === 'string' ? input : JSON.stringify(input)}'`);
+            }
+            case 'colorArray': {
+                let input;
+                for (const arg of this.args) {
+                    input = arg.evaluate(ctx);
+                    const val = ColorArray.parse(input);
+                    if (val) {
+                        return val;
+                    }
+                }
+                throw new RuntimeError(`Could not parse colorArray from value '${typeof input === 'string' ? input : JSON.stringify(input)}'`);
+            }
             case 'variableAnchorOffsetCollection': {
                 let input;
                 for (const arg of this.args) {
@@ -14982,6 +15113,12 @@ class ParsingContext {
                         parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
                     }
                     else if (expected.kind === 'padding' && (actual.kind === 'value' || actual.kind === 'number' || actual.kind === 'array')) {
+                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
+                    }
+                    else if (expected.kind === 'numberArray' && (actual.kind === 'value' || actual.kind === 'number' || actual.kind === 'array')) {
+                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
+                    }
+                    else if (expected.kind === 'colorArray' && (actual.kind === 'value' || actual.kind === 'string' || actual.kind === 'array')) {
                         parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
                     }
                     else if (expected.kind === 'variableAnchorOffsetCollection' && (actual.kind === 'value' || actual.kind === 'array')) {
@@ -15732,7 +15869,7 @@ class Interpolate {
             return null;
         const stops = [];
         let outputType = null;
-        if (operator === 'interpolate-hcl' || operator === 'interpolate-lab') {
+        if ((operator === 'interpolate-hcl' || operator === 'interpolate-lab') && context.expectedType != ColorArrayType) {
             outputType = ColorType;
         }
         else if (context.expectedType && context.expectedType.kind !== 'value') {
@@ -15759,6 +15896,8 @@ class Interpolate {
             !verifyType(outputType, ProjectionDefinitionType) &&
             !verifyType(outputType, ColorType) &&
             !verifyType(outputType, PaddingType) &&
+            !verifyType(outputType, NumberArrayType) &&
+            !verifyType(outputType, ColorArrayType) &&
             !verifyType(outputType, VariableAnchorOffsetCollectionType) &&
             !verifyType(outputType, array(NumberType))) {
             return context.error(`Type ${typeToString(outputType)} is not interpolatable.`);
@@ -15794,6 +15933,10 @@ class Interpolate {
                         return Color.interpolate(outputLower, outputUpper, t);
                     case 'padding':
                         return Padding.interpolate(outputLower, outputUpper, t);
+                    case 'colorArray':
+                        return ColorArray.interpolate(outputLower, outputUpper, t);
+                    case 'numberArray':
+                        return NumberArray.interpolate(outputLower, outputUpper, t);
                     case 'variableAnchorOffsetCollection':
                         return VariableAnchorOffsetCollection.interpolate(outputLower, outputUpper, t);
                     case 'array':
@@ -15802,9 +15945,19 @@ class Interpolate {
                         return ProjectionDefinition.interpolate(outputLower, outputUpper, t);
                 }
             case 'interpolate-hcl':
-                return Color.interpolate(outputLower, outputUpper, t, 'hcl');
+                switch (this.type.kind) {
+                    case 'color':
+                        return Color.interpolate(outputLower, outputUpper, t, 'hcl');
+                    case 'colorArray':
+                        return ColorArray.interpolate(outputLower, outputUpper, t, 'hcl');
+                }
             case 'interpolate-lab':
-                return Color.interpolate(outputLower, outputUpper, t, 'lab');
+                switch (this.type.kind) {
+                    case 'color':
+                        return Color.interpolate(outputLower, outputUpper, t, 'lab');
+                    case 'colorArray':
+                        return ColorArray.interpolate(outputLower, outputUpper, t, 'lab');
+                }
         }
     }
     eachChild(fn) {
@@ -15869,6 +16022,8 @@ const interpolateFactory = {
     color: Color.interpolate,
     number: interpolateNumber,
     padding: Padding.interpolate,
+    numberArray: NumberArray.interpolate,
+    colorArray: ColorArray.interpolate,
     variableAnchorOffsetCollection: VariableAnchorOffsetCollection.interpolate,
     array: interpolateArray
 };
@@ -18245,7 +18400,7 @@ function getType(val) {
 }
 
 function isFunction$1(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    return typeof value === 'object' && value !== null && !Array.isArray(value) && typeOf(value) === ObjectType;
 }
 function identityFunction(x) {
     return x;
@@ -18256,8 +18411,11 @@ function createFunction(parameters, propertySpec) {
     const featureDependent = zoomAndFeatureDependent || parameters.property !== undefined;
     const zoomDependent = zoomAndFeatureDependent || !featureDependent;
     const type = parameters.type || (supportsInterpolation(propertySpec) ? 'exponential' : 'interval');
-    if (isColor || propertySpec.type === 'padding') {
-        const parseFn = isColor ? Color.parse : Padding.parse;
+    if (isColor || propertySpec.type === 'padding' || propertySpec.type === 'numberArray' || propertySpec.type === 'colorArray') {
+        const parseFn = isColor ? Color.parse :
+            propertySpec.type === 'padding' ? Padding.parse :
+                propertySpec.type === 'numberArray' ? NumberArray.parse :
+                    ColorArray.parse;
         parameters = extendBy({}, parameters);
         if (parameters.stops) {
             parameters.stops = parameters.stops.map((stop) => {
@@ -18430,6 +18588,12 @@ function evaluateIdentityFunction(parameters, propertySpec, input) {
             break;
         case 'padding':
             input = Padding.parse(input);
+            break;
+        case 'colorArray':
+            input = ColorArray.parse(input);
+            break;
+        case 'numberArray':
+            input = NumberArray.parse(input);
             break;
         default:
             if (getType(input) !== propertySpec.type && (propertySpec.type !== 'enum' || !propertySpec.values[input])) {
@@ -18668,6 +18832,12 @@ function normalizePropertyExpression(value, specification) {
         else if (specification.type === 'padding' && (typeof value === 'number' || Array.isArray(value))) {
             constant = Padding.parse(value);
         }
+        else if (specification.type === 'numberArray' && (typeof value === 'number' || Array.isArray(value))) {
+            constant = NumberArray.parse(value);
+        }
+        else if (specification.type === 'colorArray' && (typeof value === 'string' || Array.isArray(value))) {
+            constant = ColorArray.parse(value);
+        }
         else if (specification.type === 'variableAnchorOffsetCollection' && Array.isArray(value)) {
             constant = VariableAnchorOffsetCollection.parse(value);
         }
@@ -18727,6 +18897,8 @@ function getExpectedType(spec) {
         boolean: BooleanType,
         formatted: FormattedType,
         padding: PaddingType,
+        numberArray: NumberArrayType,
+        colorArray: ColorArrayType,
         projectionDefinition: ProjectionDefinitionType,
         resolvedImage: ResolvedImageType,
         variableAnchorOffsetCollection: VariableAnchorOffsetCollectionType
@@ -18748,6 +18920,12 @@ function getDefaultValue(spec) {
     }
     else if (spec.type === 'padding') {
         return Padding.parse(spec.default) || null;
+    }
+    else if (spec.type === 'numberArray') {
+        return NumberArray.parse(spec.default) || null;
+    }
+    else if (spec.type === 'colorArray') {
+        return ColorArray.parse(spec.default) || null;
     }
     else if (spec.type === 'variableAnchorOffsetCollection') {
         return VariableAnchorOffsetCollection.parse(spec.default) || null;
@@ -20492,6 +20670,54 @@ function validatePadding(options) {
     }
 }
 
+function validateNumberArray(options) {
+    const key = options.key;
+    const value = options.value;
+    const type = getType(value);
+    if (type === 'array') {
+        const arrayElementSpec = {
+            type: 'number'
+        };
+        let errors = [];
+        for (let i = 0; i < value.length; i++) {
+            errors = errors.concat(options.validateSpec({
+                key: `${key}[${i}]`,
+                value: value[i],
+                validateSpec: options.validateSpec,
+                valueSpec: arrayElementSpec
+            }));
+        }
+        return errors;
+    }
+    else {
+        return validateNumber({
+            key,
+            value,
+            valueSpec: {}
+        });
+    }
+}
+
+function validateColorArray(options) {
+    const key = options.key;
+    const value = options.value;
+    const type = getType(value);
+    if (type === 'array') {
+        let errors = [];
+        for (let i = 0; i < value.length; i++) {
+            errors = errors.concat(validateColor({
+                key: `${key}[${i}]`,
+                value: value[i]}));
+        }
+        return errors;
+    }
+    else {
+        return validateColor({
+            key,
+            value});
+    }
+}
+
 function validateVariableAnchorOffsetCollection(options) {
     const key = options.key;
     const value = options.value;
@@ -20646,6 +20872,8 @@ const VALIDATORS = {
     'formatted': validateFormatted,
     'resolvedImage': validateImage,
     'padding': validatePadding,
+    'numberArray': validateNumberArray,
+    'colorArray': validateColorArray,
     'variableAnchorOffsetCollection': validateVariableAnchorOffsetCollection,
     'sprite': validateSprite,
 };
@@ -24660,7 +24888,7 @@ class UniformFloatArray extends Uniform {
         if (v != this.current) {
             this.current = v;
             const values = new Float32Array(v);
-            this.gl.uniform4fv(this.location, values);
+            this.gl.uniform1fv(this.location, values);
         }
     }
 }
@@ -25949,6 +26177,46 @@ const isHillshadeStyleLayer = (layer) => layer.type === 'hillshade';
 class HillshadeStyleLayer extends StyleLayer {
     constructor(layer) {
         super(layer, properties$6);
+        this.recalculate({ zoom: 0, zoomHistory: {} }, undefined);
+        if (this.paint.get('hillshade-illumination-direction').values.length < 1) {
+            throw new Error('"hillshade-illumination-direction" cannot be an empty array');
+        }
+        if (this.paint.get('hillshade-illumination-altitude').values.length < 1) {
+            throw new Error('"hillshade-illumination-altitude" cannot be an empty array');
+        }
+        if (this.paint.get('hillshade-highlight-color').values.length < 1) {
+            throw new Error('"hillshade-highlight-color" cannot be an empty array');
+        }
+        if (this.paint.get('hillshade-shadow-color').values.length < 1) {
+            throw new Error('"hillshade-shadow-color" cannot be an empty array');
+        }
+    }
+    getIlluminationProperties() {
+        const direction = this.paint.get('hillshade-illumination-direction').values;
+        const altitude = this.paint.get('hillshade-illumination-altitude').values;
+        const highlightColor = this.paint.get('hillshade-highlight-color').values;
+        const shadowColor = this.paint.get('hillshade-shadow-color').values;
+        // ensure all illumination properties have the same length
+        const numIlluminationSources = Math.max(direction.length, altitude.length, highlightColor.length, shadowColor.length);
+        for (let i = direction.length; i < numIlluminationSources; i++) {
+            direction.push(direction[i - 1]);
+        }
+        for (let i = altitude.length; i < numIlluminationSources; i++) {
+            altitude.push(altitude[i - 1]);
+        }
+        for (let i = highlightColor.length; i < numIlluminationSources; i++) {
+            highlightColor.push(highlightColor[i - 1]);
+        }
+        for (let i = shadowColor.length; i < numIlluminationSources; i++) {
+            shadowColor.push(shadowColor[i - 1]);
+        }
+        const altitudeRadians = [];
+        const directionRadians = [];
+        for (let i = 0; i < numIlluminationSources; i++) {
+            altitudeRadians.push(degreesToRadians(altitude[i]));
+            directionRadians.push(degreesToRadians(direction[i]));
+        }
+        return { directionRadians, altitudeRadians, shadowColor, highlightColor };
     }
     hasOffscreenPass() {
         return this.paint.get('hillshade-exaggeration') !== 0 && this.visibility !== 'none';
@@ -35217,6 +35485,7 @@ exports.Uniform3f = Uniform3f;
 exports.Uniform4f = Uniform4f;
 exports.UniformColor = UniformColor;
 exports.UniformColorArray = UniformColorArray;
+exports.UniformFloatArray = UniformFloatArray;
 exports.UniformMatrix4f = UniformMatrix4f;
 exports.UnwrappedTileID = UnwrappedTileID;
 exports.ValidationError = ValidationError;
@@ -38016,7 +38285,7 @@ define('index', ['exports', './shared'], (function (exports, performance$1) { 'u
 
 var name = "maplibre-gl";
 var description = "BSD licensed community fork of mapbox-gl, a WebGL interactive maps library";
-var version$2 = "5.3.0";
+var version$2 = "5.3.1";
 var main = "dist/maplibre-gl.js";
 var style = "dist/maplibre-gl.css";
 var license = "BSD-3-Clause";
@@ -38081,19 +38350,19 @@ var devDependencies = {
 	"@types/minimist": "^1.2.5",
 	"@types/murmurhash-js": "^1.0.6",
 	"@types/nise": "^1.4.5",
-	"@types/node": "^22.13.14",
+	"@types/node": "^22.14.1",
 	"@types/offscreencanvas": "^2019.7.3",
 	"@types/pixelmatch": "^5.2.6",
 	"@types/pngjs": "^6.0.5",
-	"@types/react": "^19.0.12",
-	"@types/react-dom": "^19.0.4",
+	"@types/react": "^19.1.2",
+	"@types/react-dom": "^19.1.2",
 	"@types/request": "^2.48.12",
 	"@types/shuffle-seed": "^1.1.3",
 	"@types/window-or-global": "^1.0.6",
-	"@typescript-eslint/eslint-plugin": "^8.28.0",
-	"@typescript-eslint/parser": "^8.28.0",
-	"@vitest/coverage-v8": "3.0.9",
-	"@vitest/ui": "3.0.9",
+	"@typescript-eslint/eslint-plugin": "^8.30.1",
+	"@typescript-eslint/parser": "^8.30.1",
+	"@vitest/coverage-v8": "3.1.1",
+	"@vitest/ui": "3.1.1",
 	address: "^2.0.3",
 	autoprefixer: "^10.4.21",
 	benchmark: "^2.1.4",
@@ -38102,24 +38371,24 @@ var devDependencies = {
 	cssnano: "^7.0.6",
 	d3: "^7.9.0",
 	"d3-queue": "^3.0.7",
-	"devtools-protocol": "^0.0.1439962",
+	"devtools-protocol": "^0.0.1447524",
 	diff: "^7.0.0",
 	"dts-bundle-generator": "^9.5.1",
-	eslint: "^9.23.0",
+	eslint: "^9.24.0",
 	"eslint-plugin-html": "^8.1.2",
 	"eslint-plugin-import": "^2.31.0",
-	"eslint-plugin-react": "^7.37.4",
+	"eslint-plugin-react": "^7.37.5",
 	"eslint-plugin-tsdoc": "0.4.0",
 	"eslint-plugin-vitest": "^0.5.4",
 	expect: "^29.7.0",
 	glob: "^11.0.1",
 	globals: "^16.0.0",
 	"is-builtin-module": "^5.0.0",
-	jsdom: "^26.0.0",
+	jsdom: "^26.1.0",
 	"junit-report-builder": "^5.1.1",
 	minimist: "^1.2.8",
 	"mock-geolocation": "^1.0.11",
-	"monocart-coverage-reports": "^2.12.3",
+	"monocart-coverage-reports": "^2.12.4",
 	nise: "^6.1.1",
 	"npm-font-open-sans": "^1.1.0",
 	"npm-run-all": "^4.1.5",
@@ -38133,23 +38402,23 @@ var devDependencies = {
 	puppeteer: "^24.1.1",
 	react: "^19.0.0",
 	"react-dom": "^19.1.0",
-	rollup: "^4.38.0",
+	rollup: "^4.40.0",
 	"rollup-plugin-sourcemaps2": "^0.5.0",
 	rw: "^1.3.3",
 	semver: "^7.7.1",
-	sharp: "^0.33.5",
+	sharp: "^0.34.1",
 	"shuffle-seed": "^1.1.6",
 	"source-map-explorer": "^2.5.3",
 	st: "^3.0.1",
-	stylelint: "^16.17.0",
-	"stylelint-config-standard": "^37.0.0",
+	stylelint: "^16.18.0",
+	"stylelint-config-standard": "^38.0.0",
 	"ts-node": "^10.9.2",
 	tslib: "^2.8.1",
-	typedoc: "^0.28.1",
-	"typedoc-plugin-markdown": "^4.6.0",
+	typedoc: "^0.28.2",
+	"typedoc-plugin-markdown": "^4.6.2",
 	"typedoc-plugin-missing-exports": "^4.0.0",
-	typescript: "^5.8.2",
-	vitest: "3.0.9",
+	typescript: "^5.8.3",
+	vitest: "3.1.1",
 	"vitest-webgl-canvas-mock": "^1.1.0"
 };
 var scripts = {
@@ -38826,6 +39095,9 @@ class Texture {
         if (this.useMipmap && this.isSizePowerOfTwo()) {
             gl.generateMipmap(gl.TEXTURE_2D);
         }
+        context.pixelStoreUnpackFlipY.setDefault();
+        context.pixelStoreUnpack.setDefault();
+        context.pixelStoreUnpackPremultiplyAlpha.setDefault();
     }
     bind(filter, wrap, minFilter) {
         const { context } = this;
@@ -42808,6 +43080,81 @@ class SourceFeatureState {
     }
 }
 
+/*
+* The maximum angle to use for the Mercator horizon. This must be less than 90
+* to prevent errors in `MercatorTransform::_calcMatrices()`. It shouldn't be too close
+* to 90, or the distance to the horizon will become very large, unnecessarily increasing
+* the number of tiles needed to render the map.
+*/
+const maxMercatorHorizonAngle = 89.25;
+/**
+ * Returns mercator coordinates in range 0..1 for given coordinates inside a specified tile.
+ * @param inTileX - X coordinate in tile units - range [0..EXTENT].
+ * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
+ * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
+ * @returns Mercator coordinates of the specified point in range [0..1].
+ */
+function tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID) {
+    const scale = 1.0 / (1 << canonicalTileID.z);
+    return new performance$1.MercatorCoordinate(inTileX / performance$1.EXTENT * scale + canonicalTileID.x * scale, inTileY / performance$1.EXTENT * scale + canonicalTileID.y * scale);
+}
+/**
+ * Returns LngLat for given in-tile coordinates and tile ID.
+ * @param inTileX - X coordinate in tile units - range [0..EXTENT].
+ * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
+ * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
+ */
+function tileCoordinatesToLocation(inTileX, inTileY, canonicalTileID) {
+    return tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID).toLngLat();
+}
+/**
+ * Convert from LngLat to world coordinates (Mercator coordinates scaled by world size).
+ * @param worldSize - Mercator world size computed from zoom level and tile size.
+ * @param lnglat - The location to convert.
+ * @returns Point
+ */
+function projectToWorldCoordinates(worldSize, lnglat) {
+    const lat = performance$1.clamp(lnglat.lat, -performance$1.MAX_VALID_LATITUDE, performance$1.MAX_VALID_LATITUDE);
+    return new performance$1.Point(performance$1.mercatorXfromLng(lnglat.lng) * worldSize, performance$1.mercatorYfromLat(lat) * worldSize);
+}
+/**
+ * Convert from world coordinates (mercator coordinates scaled by world size) to LngLat.
+ * @param worldSize - Mercator world size computed from zoom level and tile size.
+ * @param point - World coordinate.
+ * @returns LngLat
+ */
+function unprojectFromWorldCoordinates(worldSize, point) {
+    return new performance$1.MercatorCoordinate(point.x / worldSize, point.y / worldSize).toLngLat();
+}
+/**
+ * Calculate pixel height of the visible horizon in relation to map-center (e.g. height/2),
+ * multiplied by a static factor to simulate the earth-radius.
+ * The calculated value is the horizontal line from the camera-height to sea-level.
+ * @returns Horizon above center in pixels.
+ */
+function getMercatorHorizon(transform) {
+    return transform.cameraToCenterDistance * Math.min(Math.tan(performance$1.degreesToRadians(90 - transform.pitch)) * 0.85, Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch)));
+}
+function calculateTileMatrix(unwrappedTileID, worldSize) {
+    const canonical = unwrappedTileID.canonical;
+    const scale = worldSize / performance$1.zoomScale(canonical.z);
+    const unwrappedX = canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
+    const worldMatrix = performance$1.identity(new Float64Array(16));
+    performance$1.translate(worldMatrix, worldMatrix, [unwrappedX * scale, canonical.y * scale, 0]);
+    performance$1.scale(worldMatrix, worldMatrix, [scale / performance$1.EXTENT, scale / performance$1.EXTENT, 1]);
+    return worldMatrix;
+}
+function cameraMercatorCoordinateFromCenterAndRotation(center, elevation, pitch, bearing, distance) {
+    const centerMercator = performance$1.MercatorCoordinate.fromLngLat(center, elevation);
+    const mercUnitsPerMeter = performance$1.mercatorZfromAltitude(1, center.lat);
+    const dMercator = distance * mercUnitsPerMeter;
+    const dzMercator = dMercator * Math.cos(performance$1.degreesToRadians(pitch));
+    const dhMercator = Math.sqrt(dMercator * dMercator - dzMercator * dzMercator);
+    const dxMercator = dhMercator * Math.sin(performance$1.degreesToRadians(-bearing));
+    const dyMercator = dhMercator * Math.cos(performance$1.degreesToRadians(-bearing));
+    return new performance$1.MercatorCoordinate(centerMercator.x + dxMercator, centerMercator.y + dyMercator, centerMercator.z + dzMercator);
+}
+
 /**
  * A simple/heuristic function that returns whether the tile is visible under the current transform.
  * @returns an {@link IntersectionResult}.
@@ -42826,31 +43173,55 @@ function isTileVisible(frustum, aabb, plane) {
     }
     return 1 /* IntersectionResult.Partial */;
 }
-function calculateTileZoom(requestedCenterZoom, distanceToTile2D, distanceToTileZ, distanceToCenter3D, cameraVerticalFOV) {
-    /**
-    * Controls how tiles are loaded at high pitch angles. Higher numbers cause fewer, lower resolution
-    * tiles to be loaded. At 0, tiles are loaded with approximately constant screen X resolution.
-    * At 1, tiles are loaded with approximately constant screen area.
-    * At 2, tiles are loaded with approximately constant screen Y resolution.
-    */
-    const pitchTileLoadingBehavior = 1.0;
-    /**
-    * Controls how tiles are loaded at high pitch angles. Controls how different the distance to a tile must be (compared with the center point)
-    * before a new zoom level is requested. For example, if tileZoomDeadband = 1 and the center zoom is 14, tiles distant enough to be loaded at
-    * z13 will be loaded at z14, and tiles distant enough to be loaded at z14 will be loaded at z15. A higher number causes more tiles to be loaded
-    * at the center zoom level. This also results in more tiles being loaded overall.
-    */
-    const tileZoomDeadband = 0.0;
-    let thisTileDesiredZ = requestedCenterZoom;
-    const thisTilePitch = Math.atan(distanceToTile2D / distanceToTileZ);
-    const distanceToTile3D = Math.hypot(distanceToTile2D, distanceToTileZ);
-    // if distance to candidate tile is a tiny bit farther than distance to center,
-    // use the same zoom as the center. This is achieved by the scaling distance ratio by cos(fov/2)
-    thisTileDesiredZ = requestedCenterZoom + performance$1.scaleZoom(distanceToCenter3D / distanceToTile3D / Math.max(0.5, Math.cos(performance$1.degreesToRadians(cameraVerticalFOV / 2))));
-    thisTileDesiredZ += pitchTileLoadingBehavior * performance$1.scaleZoom(Math.cos(thisTilePitch)) / 2;
-    thisTileDesiredZ = thisTileDesiredZ + performance$1.clamp(requestedCenterZoom - thisTileDesiredZ, -tileZoomDeadband, tileZoomDeadband);
-    return thisTileDesiredZ;
+/**
+ * Definite integral of cos(x)^p. The analytical solution is described in `developer-guides/covering-tiles.md`,
+ * but here the integral is evaluated numerically.
+ * @param p - the power to raise cos(x) to inside the itegral
+ * @param x1 - the starting point of the integral.
+ * @param x2 - the ending point of the integral.
+ * @return the integral of cos(x)^p from x=x1 to x=x2
+ */
+function integralOfCosXByP(p, x1, x2) {
+    const numPoints = 10;
+    let sum = 0;
+    const dx = (x2 - x1) / numPoints;
+    // Midpoint integration
+    for (let i = 0; i < numPoints; i++) {
+        const x = x1 + (i + 0.5) / numPoints * (x2 - x1);
+        sum += dx * Math.pow(Math.cos(x), p);
+    }
+    return sum;
 }
+function createCalculateTileZoomFunction(maxZoomLevelsOnScreen, tileCountMaxMinRatio) {
+    return function (requestedCenterZoom, distanceToTile2D, distanceToTileZ, distanceToCenter3D, cameraVerticalFOV) {
+        /**
+        * Controls how tiles are loaded at high pitch angles. Higher numbers cause fewer, lower resolution
+        * tiles to be loaded. Calculate the value that will result in the selected number of zoom levels in
+        * the worst-case condition (when the horizon is at the top of the screen). For more information, see
+        * `developer-guides/covering-tiles.md`
+        */
+        const pitchTileLoadingBehavior = 2 * ((maxZoomLevelsOnScreen - 1) /
+            performance$1.scaleZoom(Math.cos(performance$1.degreesToRadians(maxMercatorHorizonAngle - cameraVerticalFOV)) /
+                Math.cos(performance$1.degreesToRadians(maxMercatorHorizonAngle))) - 1);
+        const centerPitch = Math.acos(distanceToTileZ / distanceToCenter3D);
+        const tileCountPitch0 = 2 * integralOfCosXByP(pitchTileLoadingBehavior - 1, 0, performance$1.degreesToRadians(cameraVerticalFOV / 2));
+        const highestPitch = Math.min(performance$1.degreesToRadians(maxMercatorHorizonAngle), centerPitch + performance$1.degreesToRadians(cameraVerticalFOV / 2));
+        const lowestPitch = Math.min(highestPitch, centerPitch - performance$1.degreesToRadians(cameraVerticalFOV / 2));
+        const tileCount = integralOfCosXByP(pitchTileLoadingBehavior - 1, lowestPitch, highestPitch);
+        const thisTilePitch = Math.atan(distanceToTile2D / distanceToTileZ);
+        const distanceToTile3D = Math.hypot(distanceToTile2D, distanceToTileZ);
+        let thisTileDesiredZ = requestedCenterZoom;
+        // if distance to candidate tile is a tiny bit farther than distance to center,
+        // use the same zoom as the center. This is achieved by the scaling distance ratio by cos(fov/2)
+        thisTileDesiredZ = thisTileDesiredZ + performance$1.scaleZoom(distanceToCenter3D / distanceToTile3D / Math.max(0.5, Math.cos(performance$1.degreesToRadians(cameraVerticalFOV / 2))));
+        thisTileDesiredZ += pitchTileLoadingBehavior * performance$1.scaleZoom(Math.cos(thisTilePitch)) / 2;
+        thisTileDesiredZ -= performance$1.scaleZoom(Math.max(1, tileCount / tileCountPitch0 / tileCountMaxMinRatio)) / 2;
+        return thisTileDesiredZ;
+    };
+}
+const defaultMaxZoomLevelsOnScreen = 9.314;
+const defaultTileCountMaxMinRatio = 3.0;
+const defaultCalculateTileZoom = createCalculateTileZoomFunction(defaultMaxZoomLevelsOnScreen, defaultTileCountMaxMinRatio);
 /**
  * Return what zoom level of a tile source would most closely cover the tiles displayed by this transform.
  * @param options - The options, most importantly the source's tile size.
@@ -42928,7 +43299,7 @@ function coveringTiles(transform, options) {
         const distToTile2d = detailsProvider.distanceToTile2d(cameraCoord.x, cameraCoord.y, tileID, aabb);
         let thisTileDesiredZ = desiredZ;
         if (allowVariableZoom) {
-            const tileZoomFunc = options.calculateTileZoom || calculateTileZoom;
+            const tileZoomFunc = options.calculateTileZoom || defaultCalculateTileZoom;
             thisTileDesiredZ = tileZoomFunc(transform.zoom + performance$1.scaleZoom(transform.tileSize / options.tileSize), distToTile2d, distanceZ, distanceToCenter3d, transform.fov);
         }
         thisTileDesiredZ = (options.roundZoom ? Math.round : Math.floor)(thisTileDesiredZ);
@@ -46666,13 +47037,13 @@ var fillExtrusionPatternFrag = 'uniform vec2 u_texsize;uniform float u_fade;unif
 var fillExtrusionPatternVert = 'uniform vec2 u_pixel_coord_upper;uniform vec2 u_pixel_coord_lower;uniform float u_height_factor;uniform vec3 u_scale;uniform float u_vertical_gradient;uniform lowp float u_opacity;uniform vec2 u_fill_translate;uniform vec3 u_lightcolor;uniform lowp vec3 u_lightpos;uniform lowp vec3 u_lightpos_globe;uniform lowp float u_lightintensity;in vec2 a_pos;in vec4 a_normal_ed;\n#ifdef TERRAIN3D\nin vec2 a_centroid;\n#endif\n#ifdef GLOBE\nout vec3 v_sphere_pos;\n#endif\nout vec2 v_pos_a;out vec2 v_pos_b;out vec4 v_lighting;\n#pragma mapbox: define lowp float base\n#pragma mapbox: define lowp float height\n#pragma mapbox: define lowp vec4 pattern_from\n#pragma mapbox: define lowp vec4 pattern_to\n#pragma mapbox: define lowp float pixel_ratio_from\n#pragma mapbox: define lowp float pixel_ratio_to\nvoid main() {\n#pragma mapbox: initialize lowp float base\n#pragma mapbox: initialize lowp float height\n#pragma mapbox: initialize mediump vec4 pattern_from\n#pragma mapbox: initialize mediump vec4 pattern_to\n#pragma mapbox: initialize lowp float pixel_ratio_from\n#pragma mapbox: initialize lowp float pixel_ratio_to\nvec2 pattern_tl_a=pattern_from.xy;vec2 pattern_br_a=pattern_from.zw;vec2 pattern_tl_b=pattern_to.xy;vec2 pattern_br_b=pattern_to.zw;float tileRatio=u_scale.x;float fromScale=u_scale.y;float toScale=u_scale.z;vec3 normal=a_normal_ed.xyz;float edgedistance=a_normal_ed.w;vec2 display_size_a=(pattern_br_a-pattern_tl_a)/pixel_ratio_from;vec2 display_size_b=(pattern_br_b-pattern_tl_b)/pixel_ratio_to;\n#ifdef TERRAIN3D\nfloat height_terrain3d_offset=get_elevation(a_centroid);float base_terrain3d_offset=height_terrain3d_offset-(base > 0.0 ? 0.0 : 10.0);\n#else\nfloat height_terrain3d_offset=0.0;float base_terrain3d_offset=0.0;\n#endif\nbase=max(0.0,base)+base_terrain3d_offset;height=max(0.0,height)+height_terrain3d_offset;float t=mod(normal.x,2.0);float elevation=t > 0.0 ? height : base;vec2 posInTile=a_pos+u_fill_translate;\n#ifdef GLOBE\nvec3 spherePos=projectToSphere(posInTile,a_pos);vec3 elevatedPos=spherePos*(1.0+elevation/GLOBE_RADIUS);v_sphere_pos=elevatedPos;gl_Position=interpolateProjectionFor3D(posInTile,spherePos,elevation);\n#else\ngl_Position=u_projection_matrix*vec4(posInTile,elevation,1.0);\n#endif\nvec2 pos=normal.x==1.0 && normal.y==0.0 && normal.z==16384.0\n? a_pos\n: vec2(edgedistance,elevation*u_height_factor);v_pos_a=get_pattern_pos(u_pixel_coord_upper,u_pixel_coord_lower,fromScale*display_size_a,tileRatio,pos);v_pos_b=get_pattern_pos(u_pixel_coord_upper,u_pixel_coord_lower,toScale*display_size_b,tileRatio,pos);v_lighting=vec4(0.0,0.0,0.0,1.0);float directional=clamp(dot(normal/16383.0,u_lightpos),0.0,1.0);directional=mix((1.0-u_lightintensity),max((0.5+u_lightintensity),1.0),directional);if (normal.y !=0.0) {directional*=((1.0-u_vertical_gradient)+(u_vertical_gradient*clamp((t+base)*pow(height/150.0,0.5),mix(0.7,0.98,1.0-u_lightintensity),1.0)));}v_lighting.rgb+=clamp(directional*u_lightcolor,mix(vec3(0.0),vec3(0.3),1.0-u_lightcolor),vec3(1.0));v_lighting*=u_opacity;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nuniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_dimension;uniform float u_zoom;uniform vec4 u_unpack;float getElevation(vec2 coord,float bias) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {vec2 epsilon=1.0/u_dimension;float tileSize=u_dimension.x-2.0;float a=getElevation(v_pos+vec2(-epsilon.x,-epsilon.y),0.0);float b=getElevation(v_pos+vec2(0,-epsilon.y),0.0);float c=getElevation(v_pos+vec2(epsilon.x,-epsilon.y),0.0);float d=getElevation(v_pos+vec2(-epsilon.x,0),0.0);float e=getElevation(v_pos,0.0);float f=getElevation(v_pos+vec2(epsilon.x,0),0.0);float g=getElevation(v_pos+vec2(-epsilon.x,epsilon.y),0.0);float h=getElevation(v_pos+vec2(0,epsilon.y),0.0);float i=getElevation(v_pos+vec2(epsilon.x,epsilon.y),0.0);float exaggerationFactor=u_zoom < 2.0 ? 0.4 : u_zoom < 4.5 ? 0.35 : 0.3;float exaggeration=u_zoom < 15.0 ? (u_zoom-15.0)*exaggerationFactor : 0.0;vec2 deriv=vec2((c+f+f+i)-(a+d+d+g),(g+h+h+i)-(a+b+b+c))*tileSize/pow(2.0,exaggeration+(28.2562-u_zoom));fragColor=clamp(vec4(deriv.x/2.0+0.5,deriv.y/2.0+0.5,1.0,1.0),0.0,1.0);\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadePrepareFrag = '#ifdef GL_ES\nprecision highp float;\n#endif\nuniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_dimension;uniform float u_zoom;uniform vec4 u_unpack;float getElevation(vec2 coord,float bias) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {vec2 epsilon=1.0/u_dimension;float tileSize=u_dimension.x-2.0;float a=getElevation(v_pos+vec2(-epsilon.x,-epsilon.y),0.0);float b=getElevation(v_pos+vec2(0,-epsilon.y),0.0);float c=getElevation(v_pos+vec2(epsilon.x,-epsilon.y),0.0);float d=getElevation(v_pos+vec2(-epsilon.x,0),0.0);float e=getElevation(v_pos,0.0);float f=getElevation(v_pos+vec2(epsilon.x,0),0.0);float g=getElevation(v_pos+vec2(-epsilon.x,epsilon.y),0.0);float h=getElevation(v_pos+vec2(0,epsilon.y),0.0);float i=getElevation(v_pos+vec2(epsilon.x,epsilon.y),0.0);float exaggerationFactor=u_zoom < 2.0 ? 0.4 : u_zoom < 4.5 ? 0.35 : 0.3;float exaggeration=u_zoom < 15.0 ? (u_zoom-15.0)*exaggerationFactor : 0.0;vec2 deriv=vec2((c+f+f+i)-(a+d+d+g),(g+h+h+i)-(a+b+b+c))*tileSize/pow(2.0,exaggeration+(28.2562-u_zoom));fragColor=clamp(vec4(deriv.x/8.0+0.5,deriv.y/8.0+0.5,1.0,1.0),0.0,1.0);\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadePrepareVert = 'uniform mat4 u_matrix;uniform vec2 u_dimension;in vec2 a_pos;in vec2 a_texture_pos;out vec2 v_pos;void main() {gl_Position=u_matrix*vec4(a_pos,0,1);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_texture_pos/8192.0)*scale+epsilon;}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform vec2 u_light;uniform vec4 u_shadow;uniform vec4 u_highlight;uniform vec4 u_accent;uniform int u_method;uniform float u_alt;uniform vec4 u_shadows[4];uniform vec4 u_highlights[4];uniform int u_num_multidirectional;\n#define PI 3.141592653589793\n#define STANDARD 0\n#define COMBINED 1\n#define IGOR 2\n#define MULTIDIRECTIONAL 3\n#define BASIC 4\nfloat get_aspect(vec2 deriv){return deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);}void igor_hillshade(vec2 deriv){float aspect=get_aspect(deriv);float azimuth=u_light.y+PI;float slope_stength=atan(length(deriv))*2.0/PI;float aspect_strength=1.0-abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);float shadow_strength=slope_stength*aspect_strength;float highlight_strength=slope_stength*(1.0-aspect_strength);fragColor=u_shadow*shadow_strength+u_highlight*highlight_strength;}void standard_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float slope=atan(1.25*length(deriv));float aspect=get_aspect(deriv);float intensity=u_light.x;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadow,u_highlight,shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;}void basic_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);if(shade > 0.5){fragColor=u_highlight*(2.0*shade-1.0);}else\n{fragColor=u_shadow*(1.0-2.0*shade);}}void multidirectional_hillshade(vec2 deriv){float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);int N=u_num_multidirectional;fragColor=vec4(0,0,0,0);for(int i=0; i < N; i++){float azimuth=u_light.y+PI+float(i-1)*PI/float(N);float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);fragColor+=mix(u_shadows[i],u_highlights[i],shade)*abs(2.0*shade-1.0)/float(N);}}void combined_hillshade(vec2 deriv){float azimuth=u_light.y+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_alt);float sin_alt=sin(u_alt);float cang=acos((sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv)));cang=clamp(cang,0.0,PI/2.0);float shade=cang*atan(length(deriv))*4.0/PI/PI;float highlight=(PI/2.0-cang)*atan(length(deriv))*4.0/PI/PI;fragColor=u_shadow*shade+u_highlight*highlight;}void main() {vec4 pixel=texture(u_image,v_pos);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));vec2 deriv=((pixel.rg*2.0)-1.0)/scaleFactor;if(u_method==STANDARD){standard_hillshade(deriv);}else if(u_method==COMBINED){combined_hillshade(deriv);}else if(u_method==IGOR){igor_hillshade(deriv);}else if(u_method==MULTIDIRECTIONAL){multidirectional_hillshade(deriv);}else if(u_method==BASIC){basic_hillshade(deriv);}else\n{standard_hillshade(deriv);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var hillshadeFrag = 'uniform sampler2D u_image;in vec2 v_pos;uniform vec2 u_latrange;uniform float u_exaggeration;uniform vec4 u_accent;uniform int u_method;uniform float u_altitudes[NUM_ILLUMINATION_SOURCES];uniform float u_azimuths[NUM_ILLUMINATION_SOURCES];uniform vec4 u_shadows[NUM_ILLUMINATION_SOURCES];uniform vec4 u_highlights[NUM_ILLUMINATION_SOURCES];\n#define PI 3.141592653589793\n#define STANDARD 0\n#define COMBINED 1\n#define IGOR 2\n#define MULTIDIRECTIONAL 3\n#define BASIC 4\nfloat get_aspect(vec2 deriv){return deriv.x !=0.0 ? atan(deriv.y,-deriv.x) : PI/2.0*(deriv.y > 0.0 ? 1.0 :-1.0);}void igor_hillshade(vec2 deriv){float aspect=get_aspect(deriv);float azimuth=u_azimuths[0]+PI;float slope_stength=atan(length(deriv))*2.0/PI;float aspect_strength=1.0-abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);float shadow_strength=slope_stength*aspect_strength;float highlight_strength=slope_stength*(1.0-aspect_strength);fragColor=u_shadows[0]*shadow_strength+u_highlights[0]*highlight_strength;}void standard_hillshade(vec2 deriv){float azimuth=u_azimuths[0]+PI;float slope=atan(0.625*length(deriv));float aspect=get_aspect(deriv);float intensity=u_exaggeration;float base=1.875-intensity*1.75;float maxValue=0.5*PI;float scaledSlope=intensity !=0.5 ? ((pow(base,slope)-1.0)/(pow(base,maxValue)-1.0))*maxValue : slope;float accent=cos(scaledSlope);vec4 accent_color=(1.0-accent)*u_accent*clamp(intensity*2.0,0.0,1.0);float shade=abs(mod((aspect+azimuth)/PI+0.5,2.0)-1.0);vec4 shade_color=mix(u_shadows[0],u_highlights[0],shade)*sin(scaledSlope)*clamp(intensity*2.0,0.0,1.0);fragColor=accent_color*(1.0-shade_color.a)+shade_color;}void basic_hillshade(vec2 deriv){float azimuth=u_azimuths[0]+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_altitudes[0]);float sin_alt=sin(u_altitudes[0]);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);if(shade > 0.5){fragColor=u_highlights[0]*(2.0*shade-1.0);}else\n{fragColor=u_shadows[0]*(1.0-2.0*shade);}}void multidirectional_hillshade(vec2 deriv){fragColor=vec4(0,0,0,0);for(int i=0; i < NUM_ILLUMINATION_SOURCES; i++){float cos_alt=cos(u_altitudes[i]);float sin_alt=sin(u_altitudes[i]);float cos_az=-cos(u_azimuths[i]);float sin_az=-sin(u_azimuths[i]);float cang=(sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv));float shade=clamp(cang,0.0,1.0);if(shade > 0.5){fragColor+=u_highlights[i]*(2.0*shade-1.0)/float(NUM_ILLUMINATION_SOURCES);}else\n{fragColor+=u_shadows[i]*(1.0-2.0*shade)/float(NUM_ILLUMINATION_SOURCES);}}}void combined_hillshade(vec2 deriv){float azimuth=u_azimuths[0]+PI;float cos_az=cos(azimuth);float sin_az=sin(azimuth);float cos_alt=cos(u_altitudes[0]);float sin_alt=sin(u_altitudes[0]);float cang=acos((sin_alt-(deriv.y*cos_az*cos_alt-deriv.x*sin_az*cos_alt))/sqrt(1.0+dot(deriv,deriv)));cang=clamp(cang,0.0,PI/2.0);float shade=cang*atan(length(deriv))*4.0/PI/PI;float highlight=(PI/2.0-cang)*atan(length(deriv))*4.0/PI/PI;fragColor=u_shadows[0]*shade+u_highlights[0]*highlight;}void main() {vec4 pixel=texture(u_image,v_pos);float scaleFactor=cos(radians((u_latrange[0]-u_latrange[1])*(1.0-v_pos.y)+u_latrange[1]));vec2 deriv=((pixel.rg*8.0)-4.0)/scaleFactor;if(u_method==STANDARD){standard_hillshade(deriv);}else if(u_method==COMBINED){combined_hillshade(deriv);}else if(u_method==IGOR){igor_hillshade(deriv);}else if(u_method==MULTIDIRECTIONAL){multidirectional_hillshade(deriv);}else if(u_method==BASIC){basic_hillshade(deriv);}else\n{standard_hillshade(deriv);}\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var hillshadeVert = 'uniform mat4 u_matrix;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);v_pos=a_pos/8192.0;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -47012,81 +47383,6 @@ class MercatorProjection {
     setErrorQueryLatitudeDegrees(_value) {
         // Do nothing.
     }
-}
-
-/*
-* The maximum angle to use for the Mercator horizon. This must be less than 90
-* to prevent errors in `MercatorTransform::_calcMatrices()`. It shouldn't be too close
-* to 90, or the distance to the horizon will become very large, unnecessarily increasing
-* the number of tiles needed to render the map.
-*/
-const maxMercatorHorizonAngle = 89.25;
-/**
- * Returns mercator coordinates in range 0..1 for given coordinates inside a specified tile.
- * @param inTileX - X coordinate in tile units - range [0..EXTENT].
- * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
- * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
- * @returns Mercator coordinates of the specified point in range [0..1].
- */
-function tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID) {
-    const scale = 1.0 / (1 << canonicalTileID.z);
-    return new performance$1.MercatorCoordinate(inTileX / performance$1.EXTENT * scale + canonicalTileID.x * scale, inTileY / performance$1.EXTENT * scale + canonicalTileID.y * scale);
-}
-/**
- * Returns LngLat for given in-tile coordinates and tile ID.
- * @param inTileX - X coordinate in tile units - range [0..EXTENT].
- * @param inTileY - Y coordinate in tile units - range [0..EXTENT].
- * @param canonicalTileID - Tile canonical ID - mercator X, Y and zoom.
- */
-function tileCoordinatesToLocation(inTileX, inTileY, canonicalTileID) {
-    return tileCoordinatesToMercatorCoordinates(inTileX, inTileY, canonicalTileID).toLngLat();
-}
-/**
- * Convert from LngLat to world coordinates (Mercator coordinates scaled by world size).
- * @param worldSize - Mercator world size computed from zoom level and tile size.
- * @param lnglat - The location to convert.
- * @returns Point
- */
-function projectToWorldCoordinates(worldSize, lnglat) {
-    const lat = performance$1.clamp(lnglat.lat, -performance$1.MAX_VALID_LATITUDE, performance$1.MAX_VALID_LATITUDE);
-    return new performance$1.Point(performance$1.mercatorXfromLng(lnglat.lng) * worldSize, performance$1.mercatorYfromLat(lat) * worldSize);
-}
-/**
- * Convert from world coordinates (mercator coordinates scaled by world size) to LngLat.
- * @param worldSize - Mercator world size computed from zoom level and tile size.
- * @param point - World coordinate.
- * @returns LngLat
- */
-function unprojectFromWorldCoordinates(worldSize, point) {
-    return new performance$1.MercatorCoordinate(point.x / worldSize, point.y / worldSize).toLngLat();
-}
-/**
- * Calculate pixel height of the visible horizon in relation to map-center (e.g. height/2),
- * multiplied by a static factor to simulate the earth-radius.
- * The calculated value is the horizontal line from the camera-height to sea-level.
- * @returns Horizon above center in pixels.
- */
-function getMercatorHorizon(transform) {
-    return transform.cameraToCenterDistance * Math.min(Math.tan(performance$1.degreesToRadians(90 - transform.pitch)) * 0.85, Math.tan(performance$1.degreesToRadians(maxMercatorHorizonAngle - transform.pitch)));
-}
-function calculateTileMatrix(unwrappedTileID, worldSize) {
-    const canonical = unwrappedTileID.canonical;
-    const scale = worldSize / performance$1.zoomScale(canonical.z);
-    const unwrappedX = canonical.x + Math.pow(2, canonical.z) * unwrappedTileID.wrap;
-    const worldMatrix = performance$1.identity(new Float64Array(16));
-    performance$1.translate(worldMatrix, worldMatrix, [unwrappedX * scale, canonical.y * scale, 0]);
-    performance$1.scale(worldMatrix, worldMatrix, [scale / performance$1.EXTENT, scale / performance$1.EXTENT, 1]);
-    return worldMatrix;
-}
-function cameraMercatorCoordinateFromCenterAndRotation(center, elevation, pitch, bearing, distance) {
-    const centerMercator = performance$1.MercatorCoordinate.fromLngLat(center, elevation);
-    const mercUnitsPerMeter = performance$1.mercatorZfromAltitude(1, center.lat);
-    const dMercator = distance * mercUnitsPerMeter;
-    const dzMercator = dMercator * Math.cos(performance$1.degreesToRadians(pitch));
-    const dhMercator = Math.sqrt(dMercator * dMercator - dzMercator * dzMercator);
-    const dxMercator = dhMercator * Math.sin(performance$1.degreesToRadians(-bearing));
-    const dyMercator = dhMercator * Math.cos(performance$1.degreesToRadians(-bearing));
-    return new performance$1.MercatorCoordinate(centerMercator.x + dxMercator, centerMercator.y + dyMercator, centerMercator.z + dzMercator);
 }
 
 /**
@@ -52996,7 +53292,7 @@ function getTokenizedAttributesAndUniforms(array) {
  * A webgl program to execute in the GPU space
  */
 class Program {
-    constructor(context, source, configuration, fixedUniforms, showOverdrawInspector, hasTerrain, projectionPrelude, projectionDefine) {
+    constructor(context, source, configuration, fixedUniforms, showOverdrawInspector, hasTerrain, projectionPrelude, projectionDefine, extraDefines) {
         const gl = context.gl;
         this.program = gl.createProgram();
         const staticAttrInfo = getTokenizedAttributesAndUniforms(source.staticAttributes);
@@ -53025,6 +53321,9 @@ class Program {
         }
         if (projectionDefine) {
             defines.push(projectionDefine);
+        }
+        if (extraDefines) {
+            defines.push(...extraDefines);
         }
         let fragmentSource = defines.concat(shaders.prelude.fragmentSource, projectionPrelude.fragmentSource, source.fragmentSource).join('\n');
         let vertexSource = defines.concat(shaders.prelude.vertexSource, projectionPrelude.vertexSource, source.vertexSource).join('\n');
@@ -53375,15 +53674,13 @@ const heatmapTextureUniformValues = (painter, layer, textureUnit, colorRampUnit)
 const hillshadeUniforms = (context, locations) => ({
     'u_image': new performance$1.Uniform1i(context, locations.u_image),
     'u_latrange': new performance$1.Uniform2f(context, locations.u_latrange),
-    'u_light': new performance$1.Uniform2f(context, locations.u_light),
-    'u_alt': new performance$1.Uniform1f(context, locations.u_alt),
-    'u_shadow': new performance$1.UniformColor(context, locations.u_shadow),
-    'u_highlight': new performance$1.UniformColor(context, locations.u_highlight),
+    'u_exaggeration': new performance$1.Uniform1f(context, locations.u_exaggeration),
+    'u_altitudes': new performance$1.UniformFloatArray(context, locations.u_altitudes),
+    'u_azimuths': new performance$1.UniformFloatArray(context, locations.u_azimuths),
     'u_accent': new performance$1.UniformColor(context, locations.u_accent),
     'u_method': new performance$1.Uniform1i(context, locations.u_method),
     'u_shadows': new performance$1.UniformColorArray(context, locations.u_shadows),
-    'u_highlights': new performance$1.UniformColorArray(context, locations.u_highlights),
-    'u_num_multidirectional': new performance$1.Uniform1i(context, locations.u_num_multidirectional)
+    'u_highlights': new performance$1.UniformColorArray(context, locations.u_highlights)
 });
 const hillshadePrepareUniforms = (context, locations) => ({
     'u_matrix': new performance$1.UniformMatrix4f(context, locations.u_matrix),
@@ -53393,31 +53690,28 @@ const hillshadePrepareUniforms = (context, locations) => ({
     'u_unpack': new performance$1.Uniform4f(context, locations.u_unpack)
 });
 const hillshadeUniformValues = (painter, tile, layer) => {
-    const shadow = layer.paint.get('hillshade-shadow-color');
-    const highlight = layer.paint.get('hillshade-highlight-color');
     const accent = layer.paint.get('hillshade-accent-color');
     const method = layer.paint.get('hillshade-method');
-    let azimuthal = performance$1.degreesToRadians(layer.paint.get('hillshade-illumination-direction'));
-    let altitude = performance$1.degreesToRadians(layer.paint.get('hillshade-illumination-altitude'));
-    // modify azimuthal angle by map rotation if light is anchored at the viewport
-    if (layer.paint.get('hillshade-illumination-anchor') === 'viewport') {
-        azimuthal += painter.transform.bearingInRadians;
+    const illumination = layer.getIlluminationProperties();
+    for (let i = 0; i < illumination.directionRadians.length; i++) {
+        // modify azimuthal angle by map rotation if light is anchored at the viewport
+        if (layer.paint.get('hillshade-illumination-anchor') === 'viewport') {
+            illumination.directionRadians[i] += painter.transform.bearingInRadians;
+        }
     }
     return {
         'u_image': 0,
         'u_latrange': getTileLatRange(painter, tile.tileID),
-        'u_light': [layer.paint.get('hillshade-exaggeration'), azimuthal],
-        'u_alt': altitude,
-        'u_shadow': shadow,
-        'u_highlight': highlight,
+        'u_exaggeration': layer.paint.get('hillshade-exaggeration'),
+        'u_altitudes': illumination.altitudeRadians,
+        'u_azimuths': illumination.directionRadians,
         'u_accent': accent,
         'u_method': method == 'combined' ? 1 :
             method == 'igor' ? 2 :
                 method == 'multidirectional' ? 3 :
                     method == 'basic' ? 4 : 0,
-        'u_highlights': [new performance$1.Color(1, 0.475, 0.302), new performance$1.Color(1, 1, 0.6), new performance$1.Color(0.475, 1, 0.3019), new performance$1.Color(0, 1, 0.502)],
-        'u_shadows': [new performance$1.Color(0, 0.525, 0.698), new performance$1.Color(0, 0, 0.4), new performance$1.Color(0.525, 0, 0.698), new performance$1.Color(1, 0, 0.498)],
-        'u_num_multidirectional': 4
+        'u_highlights': illumination.highlightColor,
+        'u_shadows': illumination.shadowColor
     };
 };
 const hillshadeUniformPrepareValues = (tileID, dem) => {
@@ -55308,7 +55602,7 @@ function prepareHeatmapTerrain(painter, tile, layer, coord, isRenderingGlobe) {
     context.viewport.set([0, 0, tile.tileSize, tile.tileSize]);
     context.clear({ color: performance$1.Color.transparent });
     const programConfiguration = bucket.programConfigurations.get(layer.id);
-    const program = painter.useProgram('heatmap', programConfiguration, !isRenderingGlobe);
+    const program = painter.useProgram('heatmap', programConfiguration, null, !isRenderingGlobe);
     const projectionData = painter.transform.getProjectionData({ overscaledTileID: tile.tileID, applyGlobeMatrix: true, applyTerrainMatrix: true });
     const terrainData = painter.style.map.terrain.getTerrainData(coord);
     program.draw(context, gl.TRIANGLES, DepthMode.disabled, stencilMode, colorMode, CullFaceMode.disabled, heatmapUniformValues(tile, painter.transform.zoom, layer.paint.get('heatmap-intensity'), 1.0), terrainData, projectionData, layer.id, bucket.layoutVertexBuffer, bucket.indexBuffer, bucket.segments, layer.paint, painter.transform.zoom, programConfiguration);
@@ -55713,7 +56007,8 @@ function renderHillshade(painter, sourceCache, layer, coords, stencilModes, dept
     const context = painter.context;
     const transform = painter.transform;
     const gl = context.gl;
-    const program = painter.useProgram('hillshade');
+    const defines = [`#define NUM_ILLUMINATION_SOURCES ${layer.paint.get('hillshade-highlight-color').values.length}`];
+    const program = painter.useProgram('hillshade', null, defines);
     const align = !painter.options.moving;
     for (const coord of coords) {
         const tile = sourceCache.getTile(coord);
@@ -56383,7 +56678,7 @@ class Painter {
             fallbackMatrix: matrix,
         };
         // Note: we force a simple mercator projection for the shader, since we want to draw a fullscreen quad.
-        this.useProgram('clippingMask', null, true).draw(context, gl.TRIANGLES, DepthMode.disabled, this.stencilClearMode, ColorMode.disabled, CullFaceMode.disabled, null, null, projectionData, '$clipping', this.viewportBuffer, this.quadTriangleIndexBuffer, this.viewportSegments);
+        this.useProgram('clippingMask', null, null, true).draw(context, gl.TRIANGLES, DepthMode.disabled, this.stencilClearMode, ColorMode.disabled, CullFaceMode.disabled, null, null, projectionData, '$clipping', this.viewportBuffer, this.quadTriangleIndexBuffer, this.viewportSegments);
     }
     _renderTileClippingMasks(layer, tileIDs, renderToTexture) {
         if (this.currentStencilSource === layer.source || !layer.isTileClipped() || !tileIDs || !tileIDs.length) {
@@ -56772,7 +57067,7 @@ class Painter {
      * False by default. Use true when drawing with a simple projection matrix is desired, eg. when drawing a fullscreen quad.
      * @returns
      */
-    useProgram(name, programConfiguration, forceSimpleProjection = false) {
+    useProgram(name, programConfiguration, defines, forceSimpleProjection = false) {
         this.cache = this.cache || {};
         const useTerrain = !!this.style.map.terrain;
         const projection = this.style.projection;
@@ -56782,9 +57077,10 @@ class Painter {
         const configurationKey = (programConfiguration ? programConfiguration.cacheKey : '');
         const overdrawKey = (this._showOverdrawInspector ? '/overdraw' : '');
         const terrainKey = (useTerrain ? '/terrain' : '');
-        const key = name + configurationKey + projectionKey + overdrawKey + terrainKey;
+        const definesKey = (defines ? `/${defines.join('/')}` : '');
+        const key = name + configurationKey + projectionKey + overdrawKey + terrainKey + definesKey;
         if (!this.cache[key]) {
-            this.cache[key] = new Program(this.context, shaders[name], programConfiguration, programUniforms[name], this._showOverdrawInspector, useTerrain, projectionPrelude, projectionDefine);
+            this.cache[key] = new Program(this.context, shaders[name], programConfiguration, programUniforms[name], this._showOverdrawInspector, useTerrain, projectionPrelude, projectionDefine, defines);
         }
         return this.cache[key];
     }
@@ -63462,6 +63758,42 @@ let Map$1 = class Map extends Camera {
         return this.style.getSource(id);
     }
     /**
+     * Change the tile Level of Detail behavior of the specified source. These parameters have no effect when
+     * pitch == 0, and the largest effect when the horizon is visible on screen.
+     *
+     * @param maxZoomLevelsOnScreen - The maximum number of distinct zoom levels allowed on screen at a time.
+     * There will generally be fewer zoom levels on the screen, the maximum can only be reached when the horizon
+     * is at the top of the screen. Increasing the maximum number of zoom levels causes the zoom level to decay
+     * faster toward the horizon.
+     * @param tileCountMaxMinRatio - The ratio of the maximum number of tiles loaded (at high pitch) to the minimum
+     * number of tiles loaded. Increasing this ratio allows more tiles to be loaded at high pitch angles. If the ratio
+     * would otherwise be exceeded, the zoom level is reduced uniformly to keep the number of tiles within the limit.
+     * @param sourceId - The ID of the source to set tile LOD parameters for. All sources will be updated if unspecified.
+     * If `sourceId` is specified but a corresponding source does not exist, an error is thrown.
+     * @example
+     * ```ts
+     * map.setSourceTileLodParams(4.0, 3.0, 'terrain');
+     * ```
+     * @see [Modify Level of Detail behavior](https://maplibre.org/maplibre-gl-js/docs/examples/lod-control/)
+
+     */
+    setSourceTileLodParams(maxZoomLevelsOnScreen, tileCountMaxMinRatio, sourceId) {
+        if (sourceId) {
+            const source = this.getSource(sourceId);
+            if (!source) {
+                throw new Error(`There is no source with ID "${sourceId}", cannot set LOD parameters`);
+            }
+            source.calculateTileZoom = createCalculateTileZoomFunction(Math.max(1, maxZoomLevelsOnScreen), Math.max(1, tileCountMaxMinRatio));
+        }
+        else {
+            for (const id in this.style.sourceCaches) {
+                this.style.sourceCaches[id].getSource().calculateTileZoom = createCalculateTileZoomFunction(Math.max(1, maxZoomLevelsOnScreen), Math.max(1, tileCountMaxMinRatio));
+            }
+        }
+        this._update(true);
+        return this;
+    }
+    /**
      * Add an image to the style. This image can be displayed on the map like any other icon in the style's
      * sprite using the image's ID with
      * [`icon-image`](https://maplibre.org/maplibre-style-spec/layers/#layout-symbol-icon-image),
@@ -66780,9 +67112,6 @@ class Popup extends performance$1.Evented {
             if (this._container) {
                 DOM.remove(this._container);
                 delete this._container;
-            }
-            if (this._closeButton) {
-                this._closeButton.removeEventListener('click', this._onClose);
             }
             if (this._map) {
                 this._map.off('move', this._update);
