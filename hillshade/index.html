@@ -68,6 +68,10 @@
         <td><label for="hillshade-illumination-altitude-slider">hillshade-illumination-altitude</label></td>
         <td><input type="range" id="hillshade-illumination-altitude-slider" min="0" max="90" step="1" value="45" /></td>
     </tr>
+    <tr>
+        <td><label for="hillshade-exaggeration-slider">hillshade-exaggeration</label></td>
+        <td><input type="range" id="hillshade-exaggeration-slider" min="0" max="1" step="0.05" value="0.5" /></td>
+    </tr>
 
     <tr>
         <td>hillshade-method<br></td>
@@ -118,7 +122,8 @@
                 'hillshade-illumination-altitude': +document.getElementById('hillshade-illumination-altitude-slider').value,
                 'hillshade-shadow-color': getColor('shadow'),
                 'hillshade-highlight-color': getColor('highlight'),
-                'hillshade-accent-color': getColor('accent')
+                'hillshade-accent-color': getColor('accent'),
+                'hillshade-exaggeration': +document.getElementById('hillshade-exaggeration-slider').value
             }
         }
         if (method == 'multidirectional') {
@@ -178,6 +183,7 @@
         document.getElementById('hillshade-shadow-opacity-slider').addEventListener('change', setHillshadeFromUi);
         document.getElementById('hillshade-accent-opacity-slider').addEventListener('change', setHillshadeFromUi);
         document.getElementById('hillshade-illumination-altitude-slider').addEventListener('change', setHillshadeFromUi);
+        document.getElementById('hillshade-exaggeration-slider').addEventListener('change', setHillshadeFromUi);
         document.getElementById('hillshade-method-selector').addEventListener('change', setHillshadeFromUi);
         setHillshadeFromUi();
     });
