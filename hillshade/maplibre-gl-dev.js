@@ -1,6 +1,6 @@
 /**
  * MapLibre GL JS
- * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.3.1/LICENSE.txt
+ * @license 3-Clause BSD. Full text of license: https://github.com/maplibre/maplibre-gl-js/blob/v5.4.0/LICENSE.txt
  */
 (function (global, factory) {
 typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
@@ -9967,6 +9967,11 @@ var $root = {
 		"default": 0,
 		units: "degrees"
 	},
+	state: {
+		type: "state",
+		"default": {
+		}
+	},
 	light: {
 		type: "light"
 	},
@@ -12808,13 +12813,13 @@ var paint_hillshade = {
 		values: {
 			standard: {
 			},
-			igor: {
+			basic: {
 			},
 			combined: {
 			},
-			multidirectional: {
+			igor: {
 			},
-			basic: {
+			multidirectional: {
 			}
 		},
 		"default": "standard",
@@ -13447,6 +13452,9 @@ function diff(before, after) {
         }
         if (!deepEqual(before.center, after.center)) {
             commands.push({ command: 'setCenter', args: [after.center] });
+        }
+        if (!deepEqual(before.state, after.state)) {
+            commands.push({ command: 'setGlobalState', args: [after.state] });
         }
         if (!deepEqual(before.centerAltitude, after.centerAltitude)) {
             commands.push({ command: 'setCenterAltitude', args: [after.centerAltitude] });
@@ -15106,22 +15114,11 @@ class ParsingContext {
                     if ((expected.kind === 'string' || expected.kind === 'number' || expected.kind === 'boolean' || expected.kind === 'object' || expected.kind === 'array') && actual.kind === 'value') {
                         parsed = annotate(parsed, expected, options.typeAnnotation || 'assert');
                     }
-                    else if ((expected.kind === 'projectionDefinition') && (actual.kind === 'string' || actual.kind === 'array')) {
-                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
-                    }
-                    else if ((expected.kind === 'color' || expected.kind === 'formatted' || expected.kind === 'resolvedImage') && (actual.kind === 'value' || actual.kind === 'string')) {
-                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
-                    }
-                    else if (expected.kind === 'padding' && (actual.kind === 'value' || actual.kind === 'number' || actual.kind === 'array')) {
-                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
-                    }
-                    else if (expected.kind === 'numberArray' && (actual.kind === 'value' || actual.kind === 'number' || actual.kind === 'array')) {
-                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
-                    }
-                    else if (expected.kind === 'colorArray' && (actual.kind === 'value' || actual.kind === 'string' || actual.kind === 'array')) {
-                        parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
-                    }
-                    else if (expected.kind === 'variableAnchorOffsetCollection' && (actual.kind === 'value' || actual.kind === 'array')) {
+                    else if (('projectionDefinition' === expected.kind && ['string', 'array'].includes(actual.kind)) ||
+                        ((['color', 'formatted', 'resolvedImage'].includes(expected.kind)) && ['value', 'string'].includes(actual.kind)) ||
+                        ((['padding', 'numberArray'].includes(expected.kind)) && ['value', 'number', 'array'].includes(actual.kind)) ||
+                        ('colorArray' === expected.kind && ['value', 'string', 'array'].includes(actual.kind)) ||
+                        ('variableAnchorOffsetCollection' === expected.kind && ['value', 'array'].includes(actual.kind))) {
                         parsed = annotate(parsed, expected, options.typeAnnotation || 'coerce');
                     }
                     else if (this.checkSubtype(expected, actual)) {
@@ -17640,6 +17637,37 @@ class Distance {
     }
 }
 
+class GlobalState {
+    constructor(key) {
+        this.type = ValueType;
+        this.key = key;
+    }
+    static parse(args, context) {
+        if (args.length !== 2) {
+            return context.error(`Expected 1 argument, but found ${args.length - 1} instead.`);
+        }
+        const key = args[1];
+        if (key === undefined || key === null) {
+            return context.error('Global state property must be defined.');
+        }
+        if (typeof key !== 'string') {
+            return context.error(`Global state property must be string, but found ${typeof args[1]} instead.`);
+        }
+        return new GlobalState(key);
+    }
+    evaluate(ctx) {
+        var _a;
+        const globalState = (_a = ctx.globals) === null || _a === void 0 ? void 0 : _a.globalState;
+        if (!globalState || Object.keys(globalState).length === 0)
+            return null;
+        return getOwn(globalState, this.key);
+    }
+    eachChild() { }
+    outputDefined() {
+        return false;
+    }
+}
+
 const expressions$1 = {
     // special forms
     '==': Equals,
@@ -17677,7 +17705,8 @@ const expressions$1 = {
     'to-string': Coercion,
     'var': Var,
     'within': Within,
-    'distance': Distance
+    'distance': Distance,
+    'global-state': GlobalState
 };
 
 class CompoundExpression {
@@ -18277,6 +18306,9 @@ function isExpressionConstant(expression) {
     else if (expression instanceof Distance) {
         return false;
     }
+    else if (expression instanceof GlobalState) {
+        return false;
+    }
     const isTypeAnnotation = expression instanceof Coercion ||
         expression instanceof Assertion;
     let childrenConstant = true;
@@ -18405,17 +18437,41 @@ function isFunction$1(value) {
 function identityFunction(x) {
     return x;
 }
+function getParseFunction(propertySpec) {
+    switch (propertySpec.type) {
+        case 'color':
+            return Color.parse;
+        case 'padding':
+            return Padding.parse;
+        case 'numberArray':
+            return NumberArray.parse;
+        case 'colorArray':
+            return ColorArray.parse;
+        default:
+            return null;
+    }
+}
+function getInnerFunction(type) {
+    switch (type) {
+        case 'exponential':
+            return evaluateExponentialFunction;
+        case 'interval':
+            return evaluateIntervalFunction;
+        case 'categorical':
+            return evaluateCategoricalFunction;
+        case 'identity':
+            return evaluateIdentityFunction;
+        default:
+            throw new Error(`Unknown function type "${type}"`);
+    }
+}
 function createFunction(parameters, propertySpec) {
-    const isColor = propertySpec.type === 'color';
     const zoomAndFeatureDependent = parameters.stops && typeof parameters.stops[0][0] === 'object';
     const featureDependent = zoomAndFeatureDependent || parameters.property !== undefined;
     const zoomDependent = zoomAndFeatureDependent || !featureDependent;
     const type = parameters.type || (supportsInterpolation(propertySpec) ? 'exponential' : 'interval');
-    if (isColor || propertySpec.type === 'padding' || propertySpec.type === 'numberArray' || propertySpec.type === 'colorArray') {
-        const parseFn = isColor ? Color.parse :
-            propertySpec.type === 'padding' ? Padding.parse :
-                propertySpec.type === 'numberArray' ? NumberArray.parse :
-                    ColorArray.parse;
+    const parseFn = getParseFunction(propertySpec);
+    if (parseFn) {
         parameters = extendBy({}, parameters);
         if (parameters.stops) {
             parameters.stops = parameters.stops.map((stop) => {
@@ -18432,17 +18488,10 @@ function createFunction(parameters, propertySpec) {
     if (parameters.colorSpace && !isSupportedInterpolationColorSpace(parameters.colorSpace)) {
         throw new Error(`Unknown color space: "${parameters.colorSpace}"`);
     }
-    let innerFun;
+    const innerFun = getInnerFunction(type);
     let hashedStops;
     let categoricalKeyType;
-    if (type === 'exponential') {
-        innerFun = evaluateExponentialFunction;
-    }
-    else if (type === 'interval') {
-        innerFun = evaluateIntervalFunction;
-    }
-    else if (type === 'categorical') {
-        innerFun = evaluateCategoricalFunction;
+    if (type === 'categorical') {
         // For categorical functions, generate an Object as a hashmap of the stops for fast searching
         hashedStops = Object.create(null);
         for (const stop of parameters.stops) {
@@ -18450,12 +18499,6 @@ function createFunction(parameters, propertySpec) {
         }
         // Infer key type based on first stop key-- used to encforce strict type checking later
         categoricalKeyType = typeof parameters.stops[0][0];
-    }
-    else if (type === 'identity') {
-        innerFun = evaluateIdentityFunction;
-    }
-    else {
-        throw new Error(`Unknown function type "${type}"`);
     }
     if (zoomAndFeatureDependent) {
         const featureFunctions = {};
@@ -18915,29 +18958,21 @@ function getDefaultValue(spec) {
         // back to in case of runtime errors
         return new Color(0, 0, 0, 0);
     }
-    else if (spec.type === 'color') {
-        return Color.parse(spec.default) || null;
-    }
-    else if (spec.type === 'padding') {
-        return Padding.parse(spec.default) || null;
-    }
-    else if (spec.type === 'numberArray') {
-        return NumberArray.parse(spec.default) || null;
-    }
-    else if (spec.type === 'colorArray') {
-        return ColorArray.parse(spec.default) || null;
-    }
-    else if (spec.type === 'variableAnchorOffsetCollection') {
-        return VariableAnchorOffsetCollection.parse(spec.default) || null;
-    }
-    else if (spec.type === 'projectionDefinition') {
-        return ProjectionDefinition.parse(spec.default) || null;
-    }
-    else if (spec.default === undefined) {
-        return null;
-    }
-    else {
-        return spec.default;
+    switch (spec.type) {
+        case 'color':
+            return Color.parse(spec.default) || null;
+        case 'padding':
+            return Padding.parse(spec.default) || null;
+        case 'numberArray':
+            return NumberArray.parse(spec.default) || null;
+        case 'colorArray':
+            return ColorArray.parse(spec.default) || null;
+        case 'variableAnchorOffsetCollection':
+            return VariableAnchorOffsetCollection.parse(spec.default) || null;
+        case 'projectionDefinition':
+            return ProjectionDefinition.parse(spec.default) || null;
+        default:
+            return (spec.default === undefined ? null : spec.default);
     }
 }
 
@@ -20848,6 +20883,18 @@ function isProjectionDefinitionValue(value) {
         typeof value[2] === 'number';
 }
 
+function isObjectLiteral(anything) {
+    return Boolean(anything) && anything.constructor === Object;
+}
+
+function validateState(options) {
+    if (!isObjectLiteral(options.value)) {
+        return [
+            new ValidationError(options.key, options.value, `object expected, ${getType(options.value)} found`),
+        ];
+    }
+}
+
 const VALIDATORS = {
     '*'() {
         return [];
@@ -20876,6 +20923,7 @@ const VALIDATORS = {
     'colorArray': validateColorArray,
     'variableAnchorOffsetCollection': validateVariableAnchorOffsetCollection,
     'sprite': validateSprite,
+    'state': validateState
 };
 /**
  * Main recursive validation function used internally.
@@ -20971,6 +21019,7 @@ validateStyleMin.glyphs = wrapCleanErrors(injectValidateSpec(validateGlyphsUrl))
 validateStyleMin.light = wrapCleanErrors(injectValidateSpec(validateLight$1));
 validateStyleMin.sky = wrapCleanErrors(injectValidateSpec(validateSky$1));
 validateStyleMin.terrain = wrapCleanErrors(injectValidateSpec(validateTerrain$1));
+validateStyleMin.state = wrapCleanErrors(injectValidateSpec(validateState));
 validateStyleMin.layer = wrapCleanErrors(injectValidateSpec(validateLayer));
 validateStyleMin.filter = wrapCleanErrors(injectValidateSpec(validateFilter$1));
 validateStyleMin.paintProperty = wrapCleanErrors(injectValidateSpec(validatePaintProperty$1));
@@ -35582,6 +35631,7 @@ exports.isTouchableEvent = isTouchableEvent;
 exports.isTouchableOrPointableType = isTouchableOrPointableType;
 exports.isWorker = isWorker;
 exports.keysDifference = keysDifference;
+exports.len = len$4;
 exports.length = length;
 exports.length$1 = length$4;
 exports.lerp = lerp;
@@ -35630,6 +35680,7 @@ exports.sameOrigin = sameOrigin;
 exports.scale = scale$5;
 exports.scale$1 = scale;
 exports.scale$2 = scale$4;
+exports.scaleAndAdd = scaleAndAdd$2;
 exports.scaleZoom = scaleZoom;
 exports.slerp = slerp;
 exports.sphericalToCartesian = sphericalToCartesian;
@@ -38285,7 +38336,7 @@ define('index', ['exports', './shared'], (function (exports, performance$1) { 'u
 
 var name = "maplibre-gl";
 var description = "BSD licensed community fork of mapbox-gl, a WebGL interactive maps library";
-var version$2 = "5.3.1";
+var version$2 = "5.4.0";
 var main = "dist/maplibre-gl.js";
 var style = "dist/maplibre-gl.css";
 var license = "BSD-3-Clause";
@@ -38308,7 +38359,7 @@ var dependencies = {
 	"@mapbox/unitbezier": "^0.0.1",
 	"@mapbox/vector-tile": "^1.3.1",
 	"@mapbox/whoots-js": "^3.1.0",
-	"@maplibre/maplibre-gl-style-spec": "^23.1.0",
+	"@maplibre/maplibre-gl-style-spec": "^23.2.0",
 	"@types/geojson": "^7946.0.16",
 	"@types/geojson-vt": "3.2.5",
 	"@types/mapbox__point-geometry": "^0.1.4",
@@ -38359,22 +38410,22 @@ var devDependencies = {
 	"@types/request": "^2.48.12",
 	"@types/shuffle-seed": "^1.1.3",
 	"@types/window-or-global": "^1.0.6",
-	"@typescript-eslint/eslint-plugin": "^8.30.1",
-	"@typescript-eslint/parser": "^8.30.1",
-	"@vitest/coverage-v8": "3.1.1",
-	"@vitest/ui": "3.1.1",
+	"@typescript-eslint/eslint-plugin": "^8.31.0",
+	"@typescript-eslint/parser": "^8.31.0",
+	"@vitest/coverage-v8": "3.1.2",
+	"@vitest/ui": "3.1.2",
 	address: "^2.0.3",
 	autoprefixer: "^10.4.21",
 	benchmark: "^2.1.4",
 	canvas: "^3.1.0",
-	cspell: "^8.18.1",
+	cspell: "^8.19.2",
 	cssnano: "^7.0.6",
 	d3: "^7.9.0",
 	"d3-queue": "^3.0.7",
-	"devtools-protocol": "^0.0.1447524",
+	"devtools-protocol": "^0.0.1449749",
 	diff: "^7.0.0",
 	"dts-bundle-generator": "^9.5.1",
-	eslint: "^9.24.0",
+	eslint: "^9.25.1",
 	"eslint-plugin-html": "^8.1.2",
 	"eslint-plugin-import": "^2.31.0",
 	"eslint-plugin-react": "^7.37.5",
@@ -38414,11 +38465,11 @@ var devDependencies = {
 	"stylelint-config-standard": "^38.0.0",
 	"ts-node": "^10.9.2",
 	tslib: "^2.8.1",
-	typedoc: "^0.28.2",
+	typedoc: "^0.28.3",
 	"typedoc-plugin-markdown": "^4.6.2",
 	"typedoc-plugin-missing-exports": "^4.0.0",
 	typescript: "^5.8.3",
-	vitest: "3.1.1",
+	vitest: "3.1.2",
 	"vitest-webgl-canvas-mock": "^1.1.0"
 };
 var scripts = {
@@ -44147,7 +44198,7 @@ class SourceCache extends performance$1.Evented {
                 // Tiles held for fading are covered by tiles that are closer to ideal
                 continue;
             }
-            const tileID = tile.tileID;
+            const tileID = transform.getCoveringTilesDetailsProvider().allowWorldCopies() ? tile.tileID : tile.tileID.unwrapTo(0);
             const scale = Math.pow(2, transform.zoom - tile.tileID.overscaledZ);
             const queryPadding = maxPitchScaleFactor * tile.queryPadding * performance$1.EXTENT / tile.tileSize / scale;
             const tileSpaceBounds = [
@@ -49725,6 +49776,44 @@ function sphereSurfacePointToCoordinates(surface) {
         return new performance$1.LngLat(0.0, latDegrees);
     }
 }
+/**
+ * Given a normalized horizon plane in Ax+By+Cz+D=0 format, compute the center and radius of
+ * the circle in that plain that contains the entire visible portion of the unit sphere from horizon
+ * to horizon.
+ * @param horizonPlane - The plane that passes through visible horizon in Ax + By + Cz + D = 0 format where mag(A,B,C)=1
+ * @returns the center point and radius of the disc that passes through the entire visible horizon
+ */
+function horizonPlaneToCenterAndRadius(horizonPlane) {
+    const center = performance$1.createVec3f64();
+    center[0] = horizonPlane[0] * -horizonPlane[3];
+    center[1] = horizonPlane[1] * -horizonPlane[3];
+    center[2] = horizonPlane[2] * -horizonPlane[3];
+    /*
+                     .*******
+                 ****|\
+               **    | \
+             **      |  1
+            * radius |   \
+           *         |    \
+           *  center +--D--+(0,0,0)
+     */
+    const radius = Math.sqrt(1 - horizonPlane[3] * horizonPlane[3]);
+    return { center, radius };
+}
+/**
+ * Computes the closest point on a sphere to `point`.
+ * @param center - Center of the sphere
+ * @param radius - Radius of the sphere
+ * @param point - Point inside or outside the sphere
+ * @returns A 3d vector of the point on the sphere closest to `point`
+ */
+function clampToSphere(center, radius, point) {
+    const relativeToCenter = performance$1.createVec3f64();
+    performance$1.sub(relativeToCenter, point, center);
+    const clamped = performance$1.createVec3f64();
+    performance$1.scaleAndAdd(clamped, center, relativeToCenter, radius / performance$1.len(relativeToCenter));
+    return clamped;
+}
 function planetScaleAtLatitude(latitudeDegrees) {
     return Math.cos(latitudeDegrees * Math.PI / 180);
 }
@@ -50307,9 +50396,8 @@ class VerticalPerspectiveTransform {
         performance$1.rotateZ$1(planeVector, planeVector, [0, 0, 0], -this.bearingInRadians);
         performance$1.rotateX$1(planeVector, planeVector, [0, 0, 0], -1 * this.center.lat * Math.PI / 180.0);
         performance$1.rotateY(planeVector, planeVector, [0, 0, 0], this.center.lng * Math.PI / 180.0);
-        // Scale the plane vector up
-        // we don't want the actually visible parts of the sphere to end up beyond distance 1 from the plane - otherwise they would be clipped by the near plane.
-        const scale = 0.25;
+        // Normalize the plane vector
+        const scale = 1 / performance$1.length$1(planeVector);
         performance$1.scale$2(planeVector, planeVector, scale);
         return [...planeVector, -tangentPlaneDistanceToC * scale];
     }
@@ -50795,8 +50883,9 @@ class VerticalPerspectiveTransform {
         }
         // Ray does not intersect the sphere -> find the closest point on the horizon to the ray.
         // Intersect the ray with the clipping plane, since we know that the intersection of the clipping plane and the sphere is the horizon.
-        const directionDotPlaneXyz = this._cachedClippingPlane[0] * rayDirection[0] + this._cachedClippingPlane[1] * rayDirection[1] + this._cachedClippingPlane[2] * rayDirection[2];
-        const originToPlaneDistance = performance$1.pointPlaneSignedDistance(this._cachedClippingPlane, rayOrigin);
+        const horizonPlane = this._cachedClippingPlane;
+        const directionDotPlaneXyz = horizonPlane[0] * rayDirection[0] + horizonPlane[1] * rayDirection[1] + horizonPlane[2] * rayDirection[2];
+        const originToPlaneDistance = performance$1.pointPlaneSignedDistance(horizonPlane, rayOrigin);
         const distanceToIntersection = -originToPlaneDistance / directionDotPlaneXyz;
         const maxRayLength = 2.0; // One globe diameter
         const planeIntersection = performance$1.createVec3f64();
@@ -50823,8 +50912,8 @@ class VerticalPerspectiveTransform {
                 this._cachedClippingPlane[2] * distanceFromPlane
             ]);
         }
-        const closestOnHorizon = performance$1.createVec3f64();
-        performance$1.normalize(closestOnHorizon, planeIntersection);
+        const horizonDisk = horizonPlaneToCenterAndRadius(horizonPlane);
+        const closestOnHorizon = clampToSphere(horizonDisk.center, horizonDisk.radius, planeIntersection);
         return sphereSurfacePointToCoordinates(closestOnHorizon);
     }
     getMatrixForModel(location, altitude) {
@@ -58377,7 +58466,6 @@ class TwoFingersTouchHandler {
         delete this._firstTwoTouches;
     }
     touchstart(e, points, mapTouches) {
-        //log('touchstart', points, e.target.innerHTML, e.targetTouches.length ? e.targetTouches[0].target.innerHTML: undefined);
         if (this._firstTwoTouches || mapTouches.length < 2)
             return;
         this._firstTwoTouches = [
@@ -59030,7 +59118,7 @@ class ScrollZoomHandler {
                 scale = 1 / scale;
             }
             const fromScale = typeof this._targetZoom !== 'number' ? tr.scale : performance$1.zoomScale(this._targetZoom);
-            this._targetZoom = Math.min(tr.maxZoom, Math.max(tr.minZoom, performance$1.scaleZoom(fromScale * scale)));
+            this._targetZoom = tr.getConstrained(tr.getCameraLngLat(), performance$1.scaleZoom(fromScale * scale)).zoom;
             // if this is a mouse wheel, refresh the starting zoom and easing
             // function we're using to smooth out the zooming between wheel
             // events
@@ -65256,7 +65344,10 @@ function checkGeolocationSupport() {
  * map center changes by ±360° due to automatic wrapping, and when about to go off screen,
  * should wrap just enough to avoid doing so.
  */
-function smartWrap(lngLat, priorPos, transform) {
+function smartWrap(lngLat, priorPos, transform, useNormalWrap = false) {
+    if (useNormalWrap || !transform.getCoveringTilesDetailsProvider().allowWorldCopies()) {
+        return lngLat === null || lngLat === void 0 ? void 0 : lngLat.wrap();
+    }
     const originalLngLat = new performance$1.LngLat(lngLat.lng, lngLat.lat);
     lngLat = new performance$1.LngLat(lngLat.lng, lngLat.lat);
     // First, try shifting one world in either direction, and see if either is closer to the
@@ -65368,19 +65459,13 @@ class Marker extends performance$1.Evented {
             }
         };
         this._update = (e) => {
-            var _a;
             if (!this._map)
                 return;
             const isFullyLoaded = this._map.loaded() && !this._map.isMoving();
             if ((e === null || e === void 0 ? void 0 : e.type) === 'terrain' || ((e === null || e === void 0 ? void 0 : e.type) === 'render' && !isFullyLoaded)) {
                 this._map.once('render', this._update);
             }
-            if (this._map.transform.renderWorldCopies) {
-                this._lngLat = smartWrap(this._lngLat, this._flatPos, this._map.transform);
-            }
-            else {
-                this._lngLat = (_a = this._lngLat) === null || _a === void 0 ? void 0 : _a.wrap();
-            }
+            this._lngLat = smartWrap(this._lngLat, this._flatPos, this._map.transform);
             this._flatPos = this._pos = this._map.project(this._lngLat)._add(this._offset);
             if (this._map.terrain) {
                 // flat position is saved because smartWrap needs non-elevated points
@@ -67137,7 +67222,6 @@ class Popup extends performance$1.Evented {
             this._update(event.point);
         };
         this._update = (cursor) => {
-            var _a;
             const hasPosition = this._lngLat || this._trackPointer;
             if (!this._map || !hasPosition || !this._content) {
                 return;
@@ -67161,12 +67245,7 @@ class Popup extends performance$1.Evented {
             if (this.options.maxWidth && this._container.style.maxWidth !== this.options.maxWidth) {
                 this._container.style.maxWidth = this.options.maxWidth;
             }
-            if (this._map.transform.renderWorldCopies && !this._trackPointer) {
-                this._lngLat = smartWrap(this._lngLat, this._flatPos, this._map.transform);
-            }
-            else {
-                this._lngLat = (_a = this._lngLat) === null || _a === void 0 ? void 0 : _a.wrap();
-            }
+            this._lngLat = smartWrap(this._lngLat, this._flatPos, this._map.transform, this._trackPointer);
             if (this._trackPointer && !cursor)
                 return;
             const pos = this._flatPos = this._pos = this._trackPointer && cursor ? cursor : this._map.project(this._lngLat);
