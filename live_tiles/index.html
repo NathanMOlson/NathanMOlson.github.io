@@ -27,7 +27,7 @@ var map = window.map = new maplibregl.Map({
         sources: {
             number: {
                 type: 'raster',
-                tiles: ['test.png'],
+                tiles: ['custom://nathanmolson.github.io/live_tiles/test.png'],
                 tileSize: 256
             }
         },
@@ -42,7 +42,42 @@ var map = window.map = new maplibregl.Map({
     maxZoom: 18,
     maxPitch: 85
 });
-//a = setInterval(function () {map.triggerTileRefresh(1021,1022,11, 'number');}, 1000);
+
+const offscreenCanvas = new OffscreenCanvas(512, 512);
+const offscreenCanvasContext = offscreenCanvas.getContext('2d', {
+  willReadFrequently: true,
+});
+function addText(imgBitmap, text) {
+  offscreenCanvasContext.drawImage(imgBitmap, 0, 0, 256, 256);
+
+  offscreenCanvasContext.font = "bold 20px Arial";
+  offscreenCanvasContext.fillStyle = "rgba(0, 0, 0, 0.5)";
+  offscreenCanvasContext.fillText(text, 0, 50);
+
+  const imgData = offscreenCanvasContext.getImageData(0, 0, 256, 256);
+  offscreenCanvasContext.clearRect(0, 0, 256, 256);
+  return imgData;
+}
+maplibregl.addProtocol('custom', async (params, abortController) => {
+    const t = await fetch(`https://${params.url.split("://")[1]}`);
+    if (t.status == 200) {
+        const bytes = await t.arrayBuffer();
+        const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
+        const bitmap = await createImageBitmap(blob);
+        const imageRgba = addText(bitmap, window.performance.now().toFixed(1));
+        const outputBitmap = await createImageBitmap(imageRgba);
+        return {data: outputBitmap};
+    } else {
+        throw new Error(`Tile fetch error: ${t.statusText}`);
+    }
+ });
+ map.on('click', (e) => {
+    const z = map.getZoom()+1;
+    const merc = maplibregl.MercatorCoordinate.fromLngLat(e.lngLat);
+    const x = Math.floor(merc.x*(2**z));
+    const y = Math.floor(merc.y*(2**z));
+    map.triggerTileRefresh(x,y,z, 'number');
+ });
 </script>
 
 </body>
