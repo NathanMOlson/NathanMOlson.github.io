@@ -72,7 +72,7 @@ maplibregl.addProtocol('custom', async (params, abortController) => {
     }
  });
  map.on('click', (e) => {
-    const z = map.getZoom()+1;
+    const z = Math.round(map.getZoom()+1);
     const merc = maplibregl.MercatorCoordinate.fromLngLat(e.lngLat);
     const x = Math.floor(merc.x*(2**z));
     const y = Math.floor(merc.y*(2**z));
