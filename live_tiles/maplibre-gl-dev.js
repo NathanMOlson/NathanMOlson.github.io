@@ -44097,9 +44097,18 @@ class SourceCache extends performance$1.Evented {
             }, expiryTimeout);
         }
     }
-    triggerTileRefresh(tileID) {
-        if (this._isIdRenderable(tileID.key)) {
-            this._reloadTile(tileID.key, 'reloading');
+    /**
+     * Reload any currently renderable tiles that are match one of the incoming `tileId` x/y/z
+     */
+    refreshTiles(tileIds) {
+        for (const id in this._tiles) {
+            if (this._isIdRenderable(id)) {
+                for (const refreshId of tileIds) {
+                    if (refreshId.equals(this._tiles[id].tileID.canonical)) {
+                        this._reloadTile(id, 'expired');
+                    }
+                }
+            }
         }
     }
     /**
@@ -63883,12 +63892,37 @@ let Map$1 = class Map extends Camera {
         this._update(true);
         return this;
     }
-    triggerTileRefresh(x, y, z, sourceId) {
+    /**
+     * Triggers a reload of the selected tile
+     *
+     * @param x - The tile X coordinate
+     * @param y - The tile Y coordinate
+     * @param z - The tile Z coordinate
+     * @param sourceId - The ID of the source
+     * @example
+     * ```ts
+     * map.refreshTile(1024, 1023, 11, 'satellite');
+     * ```
+     */
+    refreshTile(x, y, z, sourceId) {
+        this.refreshTiles([{ x, y, z }], sourceId);
+    }
+    /**
+     * Triggers a reload of the selected tiles
+     *
+     * @param tileIds - An array of tile IDs to be reloaded
+     * @param sourceId - The ID of the source
+     * @example
+     * ```ts
+     * map.refreshTiles([{x:1024, y: 1023, z: 11}, {x:1023, y: 1023, z: 11}], 'satellite');
+     * ```
+     */
+    refreshTiles(tileIds, sourceId) {
         const sourceCache = this.style.sourceCaches[sourceId];
         if (!sourceCache) {
             throw new Error(`There is no source cache with ID "${sourceId}", cannot refresh tile`);
         }
-        sourceCache.triggerTileRefresh(new performance$1.CanonicalTileID(z, x, y));
+        sourceCache.refreshTiles(tileIds.map((tileId) => { return new performance$1.CanonicalTileID(tileId.z, tileId.x, tileId.y); }));
     }
     /**
      * Add an image to the style. This image can be displayed on the map like any other icon in the style's

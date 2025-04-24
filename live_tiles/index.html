@@ -15,12 +15,13 @@
 
 <div id='map'></div>
 <script>
+const maxTileZoom = 3;
 var map = window.map = new maplibregl.Map({
     container: 'map',
-    zoom: 10,
+    zoom: 1,
     center: [0.0, 0.0],
     pitch: 0,
-    renderWorldCopies: false,
+    renderWorldCopies: true,
     hash: true,
     style: {
         version: 8,
@@ -28,7 +29,8 @@ var map = window.map = new maplibregl.Map({
             number: {
                 type: 'raster',
                 tiles: ['custom://nathanmolson.github.io/live_tiles/test.png'],
-                tileSize: 256
+                tileSize: 256,
+                maxzoom: maxTileZoom
             }
         },
         layers: [
@@ -39,8 +41,8 @@ var map = window.map = new maplibregl.Map({
             }
         ]
     },
-    maxZoom: 18,
-    maxPitch: 85
+    maxZoom: 6,
+    maxPitch: 0
 });
 
 const offscreenCanvas = new OffscreenCanvas(512, 512);
@@ -64,7 +66,7 @@ maplibregl.addProtocol('custom', async (params, abortController) => {
         const bytes = await t.arrayBuffer();
         const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
         const bitmap = await createImageBitmap(blob);
-        const imageRgba = addText(bitmap, window.performance.now().toFixed(1));
+        const imageRgba = addText(bitmap, 't=' + (window.performance.now()/1000).toFixed(4));
         const outputBitmap = await createImageBitmap(imageRgba);
         return {data: outputBitmap};
     } else {
@@ -72,11 +74,13 @@ maplibregl.addProtocol('custom', async (params, abortController) => {
     }
  });
  map.on('click', (e) => {
-    const z = Math.round(map.getZoom()+1);
+    const z = Math.min(maxTileZoom, Math.round(map.getZoom()+1));
     const merc = maplibregl.MercatorCoordinate.fromLngLat(e.lngLat);
-    const x = Math.floor(merc.x*(2**z));
-    const y = Math.floor(merc.y*(2**z));
-    map.triggerTileRefresh(x,y,z, 'number');
+    const worldSize = 2**z;
+    let x = Math.floor(merc.x*worldSize);
+    x = (x + worldSize) % worldSize;
+    let y = Math.floor(merc.y*worldSize);
+    map.refreshTile(x,y,z, 'number');
  });
 </script>
 
