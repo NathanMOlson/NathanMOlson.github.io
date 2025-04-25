@@ -54,7 +54,7 @@ function addText(imgBitmap, text) {
 
   offscreenCanvasContext.font = "bold 20px Arial";
   offscreenCanvasContext.fillStyle = "rgba(0, 0, 0, 0.5)";
-  offscreenCanvasContext.fillText(text, 0, 50);
+  offscreenCanvasContext.fillText(text, 16, 240);
 
   const imgData = offscreenCanvasContext.getImageData(0, 0, 256, 256);
   offscreenCanvasContext.clearRect(0, 0, 256, 256);
@@ -82,6 +82,7 @@ maplibregl.addProtocol('custom', async (params, abortController) => {
     let y = Math.floor(merc.y*worldSize);
     map.refreshTile(x,y,z, 'number');
  });
+ map.showTileBoundaries = true;
 </script>
 
 </body>
