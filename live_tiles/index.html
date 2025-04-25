@@ -26,7 +26,7 @@ var map = window.map = new maplibregl.Map({
     style: {
         version: 8,
         sources: {
-            number: {
+            test: {
                 type: 'raster',
                 tiles: ['custom://nathanmolson.github.io/live_tiles/test.png'],
                 tileSize: 256,
@@ -35,9 +35,9 @@ var map = window.map = new maplibregl.Map({
         },
         layers: [
             {
-                id: 'number',
+                id: 'test',
                 type: 'raster',
-                source: 'number'
+                source: 'test'
             }
         ]
     },
@@ -80,7 +80,7 @@ maplibregl.addProtocol('custom', async (params, abortController) => {
     let x = Math.floor(merc.x*worldSize);
     x = (x + worldSize) % worldSize;
     let y = Math.floor(merc.y*worldSize);
-    map.refreshTile(x,y,z, 'number');
+    map.refreshTiles('test', [{x,y,z}]);
  });
  map.showTileBoundaries = true;
 </script>

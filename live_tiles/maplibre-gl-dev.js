@@ -63893,36 +63893,26 @@ let Map$1 = class Map extends Camera {
         return this;
     }
     /**
-     * Triggers a reload of the selected tile
-     *
-     * @param x - The tile X coordinate
-     * @param y - The tile Y coordinate
-     * @param z - The tile Z coordinate
-     * @param sourceId - The ID of the source
-     * @example
-     * ```ts
-     * map.refreshTile(1024, 1023, 11, 'satellite');
-     * ```
-     */
-    refreshTile(x, y, z, sourceId) {
-        this.refreshTiles([{ x, y, z }], sourceId);
-    }
-    /**
      * Triggers a reload of the selected tiles
      *
-     * @param tileIds - An array of tile IDs to be reloaded
      * @param sourceId - The ID of the source
+     * @param tileIds - An array of tile IDs to be reloaded. If not defined, all tiles will be reloaded.
      * @example
      * ```ts
-     * map.refreshTiles([{x:1024, y: 1023, z: 11}, {x:1023, y: 1023, z: 11}], 'satellite');
+     * map.refreshTiles('satellite', [{x:1024, y: 1023, z: 11}, {x:1023, y: 1023, z: 11}]);
      * ```
      */
-    refreshTiles(tileIds, sourceId) {
+    refreshTiles(sourceId, tileIds) {
         const sourceCache = this.style.sourceCaches[sourceId];
         if (!sourceCache) {
             throw new Error(`There is no source cache with ID "${sourceId}", cannot refresh tile`);
         }
-        sourceCache.refreshTiles(tileIds.map((tileId) => { return new performance$1.CanonicalTileID(tileId.z, tileId.x, tileId.y); }));
+        if (tileIds === undefined) {
+            sourceCache.reload();
+        }
+        else {
+            sourceCache.refreshTiles(tileIds.map((tileId) => { return new performance$1.CanonicalTileID(tileId.z, tileId.x, tileId.y); }));
+        }
     }
     /**
      * Add an image to the style. This image can be displayed on the map like any other icon in the style's
