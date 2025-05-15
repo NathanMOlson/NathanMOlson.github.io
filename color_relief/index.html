@@ -35,6 +35,7 @@
                 <option value="rainbow">rainbow</option>
                 <option value="geographical">geographical</option>
                 <option value="categorical">categorical</option>
+                <option value="monochrome">monochrome</option>
             </select>
         </td>
     </tr>
@@ -162,6 +163,14 @@ colorramps['categorical'] = [
                     3258.5, 'rgb(246, 41, 13)',
                     3259.5, 'rgb(215, 5, 13)',
                     3491.25, 'rgb(215, 5, 13)',
+                ];
+colorramps['monochrome'] = [
+                    "interpolate",
+                    ["linear"],
+                    ["elevation"],
+                    0.1, '#111',
+                    0.2, 'black',
+                    3724, 'white'
                 ];
 function setColorReliefFromUi() {
     const color_ramp_name = document.getElementById('color-ramp-selector').value;
