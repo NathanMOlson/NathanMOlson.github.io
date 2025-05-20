@@ -26338,31 +26338,313 @@ const getPaint$6 = () => paint$6 = paint$6 || new Properties({
 });
 var properties$6 = ({ get paint() { return getPaint$6(); } });
 
+/**
+ * @internal
+ * A `Texture` GL related object
+ */
+class Texture {
+    constructor(context, image, format, options) {
+        this.context = context;
+        this.format = format;
+        this.texture = context.gl.createTexture();
+        this.update(image, options);
+    }
+    update(image, options, position) {
+        const { width, height } = image;
+        const resize = (!this.size || this.size[0] !== width || this.size[1] !== height) && !position;
+        const { context } = this;
+        const { gl } = context;
+        this.useMipmap = Boolean(options && options.useMipmap);
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        context.pixelStoreUnpackFlipY.set(false);
+        context.pixelStoreUnpack.set(1);
+        context.pixelStoreUnpackPremultiplyAlpha.set(this.format === gl.RGBA && (!options || options.premultiply !== false));
+        if (resize) {
+            this.size = [width, height];
+            if (image instanceof HTMLImageElement || image instanceof HTMLCanvasElement || image instanceof HTMLVideoElement || image instanceof ImageData || isImageBitmap(image)) {
+                gl.texImage2D(gl.TEXTURE_2D, 0, this.format, this.format, gl.UNSIGNED_BYTE, image);
+            }
+            else {
+                gl.texImage2D(gl.TEXTURE_2D, 0, this.format, width, height, 0, this.format, gl.UNSIGNED_BYTE, image.data);
+            }
+        }
+        else {
+            const { x, y } = position || { x: 0, y: 0 };
+            if (image instanceof HTMLImageElement || image instanceof HTMLCanvasElement || image instanceof HTMLVideoElement || image instanceof ImageData || isImageBitmap(image)) {
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            }
+            else {
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE, image.data);
+            }
+        }
+        if (this.useMipmap && this.isSizePowerOfTwo()) {
+            gl.generateMipmap(gl.TEXTURE_2D);
+        }
+        context.pixelStoreUnpackFlipY.setDefault();
+        context.pixelStoreUnpack.setDefault();
+        context.pixelStoreUnpackPremultiplyAlpha.setDefault();
+    }
+    bind(filter, wrap, minFilter) {
+        const { context } = this;
+        const { gl } = context;
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        if (minFilter === gl.LINEAR_MIPMAP_NEAREST && !this.isSizePowerOfTwo()) {
+            minFilter = gl.LINEAR;
+        }
+        if (filter !== this.filter) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter || filter);
+            this.filter = filter;
+        }
+        if (wrap !== this.wrap) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
+            this.wrap = wrap;
+        }
+    }
+    isSizePowerOfTwo() {
+        return this.size[0] === this.size[1] && (Math.log(this.size[0]) / Math.LN2) % 1 === 0;
+    }
+    destroy() {
+        const { gl } = this.context;
+        gl.deleteTexture(this.texture);
+        this.texture = null;
+    }
+}
+
+/**
+ * DEMData is a data structure for decoding, backfilling, and storing elevation data for processing in the hillshade shaders
+ * data can be populated either from a png raw image tile or from serialized data sent back from a worker. When data is initially
+ * loaded from a image tile, we decode the pixel values using the appropriate decoding formula, but we store the
+ * elevation data as an Int32 value. we add 65536 (2^16) to eliminate negative values and enable the use of
+ * integer overflow when creating the texture used in the hillshadePrepare step.
+ *
+ * DEMData also handles the backfilling of data from a tile's neighboring tiles. This is necessary because we use a pixel's 8
+ * surrounding pixel values to compute the slope at that pixel, and we cannot accurately calculate the slope at pixels on a
+ * tile's edge without backfilling from neighboring tiles.
+ */
+class DEMData {
+    /**
+     * Constructs a `DEMData` object
+     * @param uid - the tile's unique id
+     * @param data - RGBAImage data has uniform 1px padding on all sides: square tile edge size defines stride
+    // and dim is calculated as stride - 2.
+     * @param encoding - the encoding type of the data
+     * @param redFactor - the red channel factor used to unpack the data, used for `custom` encoding only
+     * @param greenFactor - the green channel factor used to unpack the data, used for `custom` encoding only
+     * @param blueFactor - the blue channel factor used to unpack the data, used for `custom` encoding only
+     * @param baseShift - the base shift used to unpack the data, used for `custom` encoding only
+     */
+    constructor(uid, data, encoding, redFactor = 1.0, greenFactor = 1.0, blueFactor = 1.0, baseShift = 0.0) {
+        this.uid = uid;
+        if (data.height !== data.width)
+            throw new RangeError('DEM tiles must be square');
+        if (encoding && !['mapbox', 'terrarium', 'custom'].includes(encoding)) {
+            warnOnce(`"${encoding}" is not a valid encoding type. Valid types include "mapbox", "terrarium" and "custom".`);
+            return;
+        }
+        this.stride = data.height;
+        const dim = this.dim = data.height - 2;
+        this.data = new Uint32Array(data.data.buffer);
+        switch (encoding) {
+            case 'terrarium':
+                // unpacking formula for mapzen terrarium:
+                // https://aws.amazon.com/public-datasets/terrain/
+                this.redFactor = 256.0;
+                this.greenFactor = 1.0;
+                this.blueFactor = 1.0 / 256.0;
+                this.baseShift = 32768.0;
+                break;
+            case 'custom':
+                this.redFactor = redFactor;
+                this.greenFactor = greenFactor;
+                this.blueFactor = blueFactor;
+                this.baseShift = baseShift;
+                break;
+            case 'mapbox':
+            default:
+                // unpacking formula for mapbox.terrain-rgb:
+                // https://www.mapbox.com/help/access-elevation-data/#mapbox-terrain-rgb
+                this.redFactor = 6553.6;
+                this.greenFactor = 25.6;
+                this.blueFactor = 0.1;
+                this.baseShift = 10000.0;
+                break;
+        }
+        // in order to avoid flashing seams between tiles, here we are initially populating a 1px border of pixels around the image
+        // with the data of the nearest pixel from the image. this data is eventually replaced when the tile's neighboring
+        // tiles are loaded and the accurate data can be backfilled using DEMData#backfillBorder
+        for (let x = 0; x < dim; x++) {
+            // left vertical border
+            this.data[this._idx(-1, x)] = this.data[this._idx(0, x)];
+            // right vertical border
+            this.data[this._idx(dim, x)] = this.data[this._idx(dim - 1, x)];
+            // left horizontal border
+            this.data[this._idx(x, -1)] = this.data[this._idx(x, 0)];
+            // right horizontal border
+            this.data[this._idx(x, dim)] = this.data[this._idx(x, dim - 1)];
+        }
+        // corners
+        this.data[this._idx(-1, -1)] = this.data[this._idx(0, 0)];
+        this.data[this._idx(dim, -1)] = this.data[this._idx(dim - 1, 0)];
+        this.data[this._idx(-1, dim)] = this.data[this._idx(0, dim - 1)];
+        this.data[this._idx(dim, dim)] = this.data[this._idx(dim - 1, dim - 1)];
+        // calculate min/max values
+        this.min = Number.MAX_SAFE_INTEGER;
+        this.max = Number.MIN_SAFE_INTEGER;
+        for (let x = 0; x < dim; x++) {
+            for (let y = 0; y < dim; y++) {
+                const ele = this.get(x, y);
+                if (ele > this.max)
+                    this.max = ele;
+                if (ele < this.min)
+                    this.min = ele;
+            }
+        }
+    }
+    get(x, y) {
+        const pixels = new Uint8Array(this.data.buffer);
+        const index = this._idx(x, y) * 4;
+        return this.unpack(pixels[index], pixels[index + 1], pixels[index + 2]);
+    }
+    getUnpackVector() {
+        return [this.redFactor, this.greenFactor, this.blueFactor, this.baseShift];
+    }
+    _idx(x, y) {
+        if (x < -1 || x >= this.dim + 1 || y < -1 || y >= this.dim + 1)
+            throw new RangeError('out of range source coordinates for DEM data');
+        return (y + 1) * this.stride + (x + 1);
+    }
+    unpack(r, g, b) {
+        return (r * this.redFactor + g * this.greenFactor + b * this.blueFactor - this.baseShift);
+    }
+    pack(v) {
+        return packDEMData(v, this.getUnpackVector());
+    }
+    getPixels() {
+        return new RGBAImage({ width: this.stride, height: this.stride }, new Uint8Array(this.data.buffer));
+    }
+    backfillBorder(borderTile, dx, dy) {
+        if (this.dim !== borderTile.dim)
+            throw new Error('dem dimension mismatch');
+        let xMin = dx * this.dim, xMax = dx * this.dim + this.dim, yMin = dy * this.dim, yMax = dy * this.dim + this.dim;
+        switch (dx) {
+            case -1:
+                xMin = xMax - 1;
+                break;
+            case 1:
+                xMax = xMin + 1;
+                break;
+        }
+        switch (dy) {
+            case -1:
+                yMin = yMax - 1;
+                break;
+            case 1:
+                yMax = yMin + 1;
+                break;
+        }
+        const ox = -dx * this.dim;
+        const oy = -dy * this.dim;
+        for (let y = yMin; y < yMax; y++) {
+            for (let x = xMin; x < xMax; x++) {
+                this.data[this._idx(x, y)] = borderTile.data[this._idx(x + ox, y + oy)];
+            }
+        }
+    }
+}
+function packDEMData(v, unpackVector) {
+    const redFactor = unpackVector[0];
+    const greenFactor = unpackVector[1];
+    const blueFactor = unpackVector[2];
+    const baseShift = unpackVector[3];
+    const minScale = Math.min(redFactor, greenFactor, blueFactor);
+    const vScaled = Math.round((v + baseShift) / minScale);
+    return {
+        r: Math.floor(vScaled * minScale / redFactor) % 256,
+        g: Math.floor(vScaled * minScale / greenFactor) % 256,
+        b: Math.floor(vScaled * minScale / blueFactor) % 256
+    };
+}
+register('DEMData', DEMData);
+
 const isColorReliefStyleLayer = (layer) => layer.type === 'color-relief';
 class ColorReliefStyleLayer extends StyleLayer {
     constructor(layer) {
         super(layer, properties$6);
-        this._updateColorRamp();
     }
-    _updateColorRamp() {
+    _createColorRamp() {
+        const colorRamp = { elevationStops: [], colorStops: [] };
         const expression = this._transitionablePaint._values['color-relief-color'].value.expression;
         if (expression instanceof ZoomConstantExpression && expression._styleExpression.expression instanceof Interpolate) {
             const interpolater = expression._styleExpression.expression;
-            this.elevationStops = [];
-            this.colorStops = [];
-            for (const label of interpolater.labels) {
-                this.elevationStops.push(label);
-                this.colorStops.push(interpolater.evaluate({ globals: { elevation: label } }));
-            }
-            const colormapLength = nextPowerOfTwo(this.elevationStops.length - 1) + 1;
-            while (this.elevationStops.length < colormapLength) {
-                this.elevationStops.push(this.elevationStops.at(-1));
-                this.colorStops.push(this.colorStops.at(-1));
+            colorRamp.elevationStops = interpolater.labels;
+            colorRamp.colorStops = [];
+            for (const label of colorRamp.elevationStops) {
+                colorRamp.colorStops.push(interpolater.evaluate({ globals: { elevation: label } }));
             }
         }
+        if (colorRamp.elevationStops.length < 1) {
+            colorRamp.elevationStops = [0];
+            colorRamp.colorStops = [Color.transparent];
+        }
+        if (colorRamp.elevationStops.length < 2) {
+            colorRamp.elevationStops.push(colorRamp.elevationStops[0] + 1);
+            colorRamp.colorStops.push(colorRamp.colorStops[0]);
+        }
+        return colorRamp;
+    }
+    /**
+     * Get the color ramp, enforcing a maximum length for the vectors. This modifies the internal color ramp,
+     * so that the remapping is only performed once.
+     *
+     * @param maxLength - the maximum number of stops in the color ramp
+     *
+     * @return a `ColorRamp` object with no more than `maxLength` stops.
+     *
+     */
+    getColorRamp(maxLength) {
+        if (!this.colorRamp) {
+            this.colorRamp = this._createColorRamp();
+        }
+        if (this.colorRamp.elevationStops.length > maxLength) {
+            const colorRamp = { elevationStops: [], colorStops: [] };
+            const remapStepSize = (this.colorRamp.elevationStops.length - 1) / (maxLength - 1);
+            for (let i = 0; i < this.colorRamp.elevationStops.length - 0.5; i += remapStepSize) {
+                colorRamp.elevationStops.push(this.colorRamp.elevationStops[Math.round(i)]);
+                colorRamp.colorStops.push(this.colorRamp.colorStops[Math.round(i)]);
+            }
+            warnOnce(`Too many colors in specification of ${this.id} color-relief layer, may not render properly.`);
+            this.colorRamp = colorRamp;
+        }
+        return this.colorRamp;
+    }
+    getColorRampTextures(context, maxLength, unpackVector) {
+        if (!this.colorRampTextures) {
+            const colorRamp = this.getColorRamp(maxLength);
+            const colorImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
+            const elevationImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
+            for (let i = 0; i < colorRamp.elevationStops.length; i++) {
+                const elevationPacked = packDEMData(colorRamp.elevationStops[i], unpackVector);
+                elevationImage.data[4 * i + 0] = elevationPacked.r;
+                elevationImage.data[4 * i + 1] = elevationPacked.g;
+                elevationImage.data[4 * i + 2] = elevationPacked.b;
+                elevationImage.data[4 * i + 3] = 255;
+                const pxColor = colorRamp.colorStops[i];
+                colorImage.data[4 * i + 0] = Math.round(pxColor.r * 255 / pxColor.a);
+                colorImage.data[4 * i + 1] = Math.round(pxColor.g * 255 / pxColor.a);
+                colorImage.data[4 * i + 2] = Math.round(pxColor.b * 255 / pxColor.a);
+                colorImage.data[4 * i + 3] = Math.round(pxColor.a * 255);
+            }
+            this.colorRampTextures = {
+                elevationTexture: new Texture(context, elevationImage, context.gl.RGBA),
+                colorTexture: new Texture(context, colorImage, context.gl.RGBA)
+            };
+        }
+        return this.colorRampTextures;
     }
     hasOffscreenPass() {
-        return this.visibility !== 'none' && !!this.elevationStops;
+        return this.visibility !== 'none' && !!this.colorRamp;
     }
 }
 
@@ -33437,146 +33719,6 @@ function getQuadkey(z, x, y) {
 register('CanonicalTileID', CanonicalTileID);
 register('OverscaledTileID', OverscaledTileID, { omit: ['terrainRttPosMatrix32f'] });
 
-/**
- * DEMData is a data structure for decoding, backfilling, and storing elevation data for processing in the hillshade shaders
- * data can be populated either from a png raw image tile or from serialized data sent back from a worker. When data is initially
- * loaded from a image tile, we decode the pixel values using the appropriate decoding formula, but we store the
- * elevation data as an Int32 value. we add 65536 (2^16) to eliminate negative values and enable the use of
- * integer overflow when creating the texture used in the hillshadePrepare step.
- *
- * DEMData also handles the backfilling of data from a tile's neighboring tiles. This is necessary because we use a pixel's 8
- * surrounding pixel values to compute the slope at that pixel, and we cannot accurately calculate the slope at pixels on a
- * tile's edge without backfilling from neighboring tiles.
- */
-class DEMData {
-    /**
-     * Constructs a `DEMData` object
-     * @param uid - the tile's unique id
-     * @param data - RGBAImage data has uniform 1px padding on all sides: square tile edge size defines stride
-    // and dim is calculated as stride - 2.
-     * @param encoding - the encoding type of the data
-     * @param redFactor - the red channel factor used to unpack the data, used for `custom` encoding only
-     * @param greenFactor - the green channel factor used to unpack the data, used for `custom` encoding only
-     * @param blueFactor - the blue channel factor used to unpack the data, used for `custom` encoding only
-     * @param baseShift - the base shift used to unpack the data, used for `custom` encoding only
-     */
-    constructor(uid, data, encoding, redFactor = 1.0, greenFactor = 1.0, blueFactor = 1.0, baseShift = 0.0) {
-        this.uid = uid;
-        if (data.height !== data.width)
-            throw new RangeError('DEM tiles must be square');
-        if (encoding && !['mapbox', 'terrarium', 'custom'].includes(encoding)) {
-            warnOnce(`"${encoding}" is not a valid encoding type. Valid types include "mapbox", "terrarium" and "custom".`);
-            return;
-        }
-        this.stride = data.height;
-        const dim = this.dim = data.height - 2;
-        this.data = new Uint32Array(data.data.buffer);
-        switch (encoding) {
-            case 'terrarium':
-                // unpacking formula for mapzen terrarium:
-                // https://aws.amazon.com/public-datasets/terrain/
-                this.redFactor = 256.0;
-                this.greenFactor = 1.0;
-                this.blueFactor = 1.0 / 256.0;
-                this.baseShift = 32768.0;
-                break;
-            case 'custom':
-                this.redFactor = redFactor;
-                this.greenFactor = greenFactor;
-                this.blueFactor = blueFactor;
-                this.baseShift = baseShift;
-                break;
-            case 'mapbox':
-            default:
-                // unpacking formula for mapbox.terrain-rgb:
-                // https://www.mapbox.com/help/access-elevation-data/#mapbox-terrain-rgb
-                this.redFactor = 6553.6;
-                this.greenFactor = 25.6;
-                this.blueFactor = 0.1;
-                this.baseShift = 10000.0;
-                break;
-        }
-        // in order to avoid flashing seams between tiles, here we are initially populating a 1px border of pixels around the image
-        // with the data of the nearest pixel from the image. this data is eventually replaced when the tile's neighboring
-        // tiles are loaded and the accurate data can be backfilled using DEMData#backfillBorder
-        for (let x = 0; x < dim; x++) {
-            // left vertical border
-            this.data[this._idx(-1, x)] = this.data[this._idx(0, x)];
-            // right vertical border
-            this.data[this._idx(dim, x)] = this.data[this._idx(dim - 1, x)];
-            // left horizontal border
-            this.data[this._idx(x, -1)] = this.data[this._idx(x, 0)];
-            // right horizontal border
-            this.data[this._idx(x, dim)] = this.data[this._idx(x, dim - 1)];
-        }
-        // corners
-        this.data[this._idx(-1, -1)] = this.data[this._idx(0, 0)];
-        this.data[this._idx(dim, -1)] = this.data[this._idx(dim - 1, 0)];
-        this.data[this._idx(-1, dim)] = this.data[this._idx(0, dim - 1)];
-        this.data[this._idx(dim, dim)] = this.data[this._idx(dim - 1, dim - 1)];
-        // calculate min/max values
-        this.min = Number.MAX_SAFE_INTEGER;
-        this.max = Number.MIN_SAFE_INTEGER;
-        for (let x = 0; x < dim; x++) {
-            for (let y = 0; y < dim; y++) {
-                const ele = this.get(x, y);
-                if (ele > this.max)
-                    this.max = ele;
-                if (ele < this.min)
-                    this.min = ele;
-            }
-        }
-    }
-    get(x, y) {
-        const pixels = new Uint8Array(this.data.buffer);
-        const index = this._idx(x, y) * 4;
-        return this.unpack(pixels[index], pixels[index + 1], pixels[index + 2]);
-    }
-    getUnpackVector() {
-        return [this.redFactor, this.greenFactor, this.blueFactor, this.baseShift];
-    }
-    _idx(x, y) {
-        if (x < -1 || x >= this.dim + 1 || y < -1 || y >= this.dim + 1)
-            throw new RangeError('out of range source coordinates for DEM data');
-        return (y + 1) * this.stride + (x + 1);
-    }
-    unpack(r, g, b) {
-        return (r * this.redFactor + g * this.greenFactor + b * this.blueFactor - this.baseShift);
-    }
-    getPixels() {
-        return new RGBAImage({ width: this.stride, height: this.stride }, new Uint8Array(this.data.buffer));
-    }
-    backfillBorder(borderTile, dx, dy) {
-        if (this.dim !== borderTile.dim)
-            throw new Error('dem dimension mismatch');
-        let xMin = dx * this.dim, xMax = dx * this.dim + this.dim, yMin = dy * this.dim, yMax = dy * this.dim + this.dim;
-        switch (dx) {
-            case -1:
-                xMin = xMax - 1;
-                break;
-            case 1:
-                xMax = xMin + 1;
-                break;
-        }
-        switch (dy) {
-            case -1:
-                yMin = yMax - 1;
-                break;
-            case 1:
-                yMax = yMin + 1;
-                break;
-        }
-        const ox = -dx * this.dim;
-        const oy = -dy * this.dim;
-        for (let y = yMin; y < yMax; y++) {
-            for (let x = xMin; x < xMax; x++) {
-                this.data[this._idx(x, y)] = borderTile.data[this._idx(x + ox, y + oy)];
-            }
-        }
-    }
-}
-register('DEMData', DEMData);
-
 /** A 2-d bounding box covering an X and Y range. */
 class Bounds {
     constructor() {
@@ -35701,6 +35843,7 @@ exports.SegmentVector = SegmentVector;
 exports.SubdivisionGranularityExpression = SubdivisionGranularityExpression;
 exports.SubdivisionGranularitySetting = SubdivisionGranularitySetting;
 exports.SymbolBucket = SymbolBucket;
+exports.Texture = Texture;
 exports.Transitionable = Transitionable;
 exports.TriangleIndexArray = TriangleIndexArray;
 exports.Uniform1f = Uniform1f;
@@ -38536,7 +38679,7 @@ var dependencies = {
 	"@mapbox/unitbezier": "^0.0.1",
 	"@mapbox/vector-tile": "^1.3.1",
 	"@mapbox/whoots-js": "^3.1.0",
-	"@maplibre/maplibre-gl-style-spec": "^23.2.3",
+	"@maplibre/maplibre-gl-style-spec": "^23.3.0",
 	"@types/geojson": "^7946.0.16",
 	"@types/geojson-vt": "3.2.5",
 	"@types/mapbox__point-geometry": "^0.1.4",
@@ -38578,7 +38721,7 @@ var devDependencies = {
 	"@types/minimist": "^1.2.5",
 	"@types/murmurhash-js": "^1.0.6",
 	"@types/nise": "^1.4.5",
-	"@types/node": "^22.15.18",
+	"@types/node": "^22.15.19",
 	"@types/offscreencanvas": "^2019.7.3",
 	"@types/pixelmatch": "^5.2.6",
 	"@types/pngjs": "^6.0.5",
@@ -38595,15 +38738,15 @@ var devDependencies = {
 	autoprefixer: "^10.4.21",
 	benchmark: "^2.1.4",
 	canvas: "^3.1.0",
-	cspell: "^9.0.1",
+	cspell: "^9.0.2",
 	cssnano: "^7.0.7",
 	d3: "^7.9.0",
 	"d3-queue": "^3.0.7",
-	"devtools-protocol": "^0.0.1460501",
+	"devtools-protocol": "^0.0.1462568",
 	diff: "^8.0.1",
 	"dts-bundle-generator": "^9.5.1",
-	eslint: "^9.26.0",
-	"eslint-plugin-html": "^8.1.2",
+	eslint: "^9.27.0",
+	"eslint-plugin-html": "^8.1.3",
 	"eslint-plugin-import": "^2.31.0",
 	"eslint-plugin-react": "^7.37.5",
 	"eslint-plugin-tsdoc": "0.4.0",
@@ -38616,7 +38759,7 @@ var devDependencies = {
 	"junit-report-builder": "^5.1.1",
 	minimist: "^1.2.8",
 	"mock-geolocation": "^1.0.11",
-	"monocart-coverage-reports": "^2.12.4",
+	"monocart-coverage-reports": "^2.12.6",
 	nise: "^6.1.1",
 	"npm-font-open-sans": "^1.1.0",
 	"npm-run-all": "^4.1.5",
@@ -38627,11 +38770,11 @@ var devDependencies = {
 	"postcss-cli": "^11.0.1",
 	"postcss-inline-svg": "^6.0.0",
 	"pretty-bytes": "^7.0.0",
-	puppeteer: "^24.8.2",
+	puppeteer: "^24.9.0",
 	react: "^19.0.0",
 	"react-dom": "^19.1.0",
-	rollup: "^4.40.2",
-	"rollup-plugin-sourcemaps2": "^0.5.1",
+	rollup: "^4.41.0",
+	"rollup-plugin-sourcemaps2": "^0.5.2",
 	rw: "^1.3.3",
 	semver: "^7.7.2",
 	sharp: "^0.34.1",
@@ -39281,80 +39424,6 @@ function doOnceCompleted(jsonsMap, imagesMap) {
     });
 }
 
-/**
- * @internal
- * A `Texture` GL related object
- */
-class Texture {
-    constructor(context, image, format, options) {
-        this.context = context;
-        this.format = format;
-        this.texture = context.gl.createTexture();
-        this.update(image, options);
-    }
-    update(image, options, position) {
-        const { width, height } = image;
-        const resize = (!this.size || this.size[0] !== width || this.size[1] !== height) && !position;
-        const { context } = this;
-        const { gl } = context;
-        this.useMipmap = Boolean(options && options.useMipmap);
-        gl.bindTexture(gl.TEXTURE_2D, this.texture);
-        context.pixelStoreUnpackFlipY.set(false);
-        context.pixelStoreUnpack.set(1);
-        context.pixelStoreUnpackPremultiplyAlpha.set(this.format === gl.RGBA && (!options || options.premultiply !== false));
-        if (resize) {
-            this.size = [width, height];
-            if (image instanceof HTMLImageElement || image instanceof HTMLCanvasElement || image instanceof HTMLVideoElement || image instanceof ImageData || performance$1.isImageBitmap(image)) {
-                gl.texImage2D(gl.TEXTURE_2D, 0, this.format, this.format, gl.UNSIGNED_BYTE, image);
-            }
-            else {
-                gl.texImage2D(gl.TEXTURE_2D, 0, this.format, width, height, 0, this.format, gl.UNSIGNED_BYTE, image.data);
-            }
-        }
-        else {
-            const { x, y } = position || { x: 0, y: 0 };
-            if (image instanceof HTMLImageElement || image instanceof HTMLCanvasElement || image instanceof HTMLVideoElement || image instanceof ImageData || performance$1.isImageBitmap(image)) {
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, image);
-            }
-            else {
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE, image.data);
-            }
-        }
-        if (this.useMipmap && this.isSizePowerOfTwo()) {
-            gl.generateMipmap(gl.TEXTURE_2D);
-        }
-        context.pixelStoreUnpackFlipY.setDefault();
-        context.pixelStoreUnpack.setDefault();
-        context.pixelStoreUnpackPremultiplyAlpha.setDefault();
-    }
-    bind(filter, wrap, minFilter) {
-        const { context } = this;
-        const { gl } = context;
-        gl.bindTexture(gl.TEXTURE_2D, this.texture);
-        if (minFilter === gl.LINEAR_MIPMAP_NEAREST && !this.isSizePowerOfTwo()) {
-            minFilter = gl.LINEAR;
-        }
-        if (filter !== this.filter) {
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter || filter);
-            this.filter = filter;
-        }
-        if (wrap !== this.wrap) {
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap);
-            this.wrap = wrap;
-        }
-    }
-    isSizePowerOfTwo() {
-        return this.size[0] === this.size[1] && (Math.log(this.size[0]) / Math.LN2) % 1 === 0;
-    }
-    destroy() {
-        const { gl } = this.context;
-        gl.deleteTexture(this.texture);
-        this.texture = null;
-    }
-}
-
 function renderStyleImage(image) {
     const { userImage } = image;
     if (userImage && userImage.render) {
@@ -39585,7 +39654,7 @@ class ImageManager extends performance$1.Evented {
     bind(context) {
         const gl = context.gl;
         if (!this.atlasTexture) {
-            this.atlasTexture = new Texture(context, this.atlasImage, gl.RGBA);
+            this.atlasTexture = new performance$1.Texture(context, this.atlasImage, gl.RGBA);
         }
         else if (this.dirty) {
             this.atlasTexture.update(this.atlasImage);
@@ -41330,7 +41399,7 @@ class RasterTileSource extends performance$1.Evented {
                         tile.texture.update(img, { useMipmap: true });
                     }
                     else {
-                        tile.texture = new Texture(context, img, gl.RGBA, { useMipmap: true });
+                        tile.texture = new performance$1.Texture(context, img, gl.RGBA, { useMipmap: true });
                         tile.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE, gl.LINEAR_MIPMAP_NEAREST);
                     }
                     tile.state = 'loaded';
@@ -42053,7 +42122,7 @@ class ImageSource extends performance$1.Evented {
         const context = this.map.painter.context;
         const gl = context.gl;
         if (!this.texture) {
-            this.texture = new Texture(context, this.image, gl.RGBA);
+            this.texture = new performance$1.Texture(context, this.image, gl.RGBA);
             this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
         let newTilesLoaded = false;
@@ -42280,7 +42349,7 @@ class VideoSource extends ImageSource {
         const context = this.map.painter.context;
         const gl = context.gl;
         if (!this.texture) {
-            this.texture = new Texture(context, this.video, gl.RGBA);
+            this.texture = new performance$1.Texture(context, this.video, gl.RGBA);
             this.texture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
         else if (!this.video.paused) {
@@ -42433,7 +42502,7 @@ class CanvasSource extends ImageSource {
         const context = this.map.painter.context;
         const gl = context.gl;
         if (!this.texture) {
-            this.texture = new Texture(context, this.canvas, gl.RGBA, { premultiply: true });
+            this.texture = new performance$1.Texture(context, this.canvas, gl.RGBA, { premultiply: true });
         }
         else if (resize || this._playing) {
             this.texture.update(this.canvas, { premultiply: true });
@@ -42783,11 +42852,11 @@ class Tile {
         }
         const gl = context.gl;
         if (this.imageAtlas && !this.imageAtlas.uploaded) {
-            this.imageAtlasTexture = new Texture(context, this.imageAtlas.image, gl.RGBA);
+            this.imageAtlasTexture = new performance$1.Texture(context, this.imageAtlas.image, gl.RGBA);
             this.imageAtlas.uploaded = true;
         }
         if (this.glyphAtlasImage) {
-            this.glyphAtlasTexture = new Texture(context, this.glyphAtlasImage, gl.ALPHA);
+            this.glyphAtlasTexture = new performance$1.Texture(context, this.glyphAtlasImage, gl.ALPHA);
             this.glyphAtlasImage = null;
         }
     }
@@ -47233,7 +47302,7 @@ var collisionCircleFrag = 'in float v_radius;in vec2 v_extrude;in float v_collis
 var collisionCircleVert = 'in vec2 a_pos;in float a_radius;in vec2 a_flags;uniform vec2 u_viewport_size;out float v_radius;out vec2 v_extrude;out float v_collision;void main() {float radius=a_radius;float collision=a_flags.x;float vertexIdx=a_flags.y;vec2 quadVertexOffset=vec2(mix(-1.0,1.0,float(vertexIdx >=2.0)),mix(-1.0,1.0,float(vertexIdx >=1.0 && vertexIdx <=2.0)));vec2 quadVertexExtent=quadVertexOffset*radius;float padding_factor=1.2;v_radius=radius;v_extrude=quadVertexExtent*padding_factor;v_collision=collision;gl_Position=vec4((a_pos/u_viewport_size*2.0-1.0)*vec2(1.0,-1.0),0.0,1.0)+vec4(quadVertexExtent*padding_factor/u_viewport_size*2.0,0.0,0.0);}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var colorReliefFrag = 'uniform sampler2D u_image;uniform vec4 u_unpack;uniform float u_elevation_stops[NUM_ELEVATION_STOPS];uniform vec4 u_color_stops[NUM_ELEVATION_STOPS];uniform float u_opacity;in vec2 v_pos;float getElevation(vec2 coord) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {float el=getElevation(v_pos);int r=(NUM_ELEVATION_STOPS-1);int l=0;while(r-l > 1){int m=(r+l)/2;if(el < u_elevation_stops[m]){r=m;}else\n{l=m;}}fragColor=u_opacity*mix(u_color_stops[l],u_color_stops[r],clamp((el-u_elevation_stops[l])/(u_elevation_stops[r]-u_elevation_stops[l]),0.0,1.0));\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var colorReliefFrag = 'uniform sampler2D u_image;uniform vec4 u_unpack;uniform sampler2D u_elevation_stops;uniform sampler2D u_color_stops;uniform float u_opacity;in vec2 v_pos;float getElevation(vec2 coord) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}float getElevationStop(int stop) {float x=(float(stop)+0.5)/float(textureSize(u_elevation_stops,0)[0]);vec4 data=texture(u_elevation_stops,vec2(x,0))*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {float el=getElevation(v_pos);int num_elevation_stops=textureSize(u_elevation_stops,0)[0];int r=(num_elevation_stops-1);int l=0;float el_l=getElevationStop(l);float el_r=getElevationStop(r);while(r-l > 1){int m=(r+l)/2;float el_m=getElevationStop(m);if(el < el_m){r=m;el_r=el_m;}else\n{l=m;el_l=el_m;}}float x=(float(l)+(el-el_l)/(el_r-el_l)+0.5)/float(textureSize(u_color_stops,0)[0]);fragColor=u_opacity*texture(u_color_stops,vec2(x,0));\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var colorReliefVert = 'uniform vec2 u_dimension;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_pos/8192.0)*scale+epsilon;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -54034,8 +54103,8 @@ const colorReliefUniforms = (context, locations) => ({
     'u_image': new performance$1.Uniform1i(context, locations.u_image),
     'u_unpack': new performance$1.Uniform4f(context, locations.u_unpack),
     'u_dimension': new performance$1.Uniform2f(context, locations.u_dimension),
-    'u_elevation_stops': new performance$1.UniformFloatArray(context, locations.u_elevation_stops),
-    'u_color_stops': new performance$1.UniformColorArray(context, locations.u_color_stops),
+    'u_elevation_stops': new performance$1.Uniform1i(context, locations.u_elevation_stops),
+    'u_color_stops': new performance$1.Uniform1i(context, locations.u_color_stops),
     'u_opacity': new performance$1.Uniform1f(context, locations.u_opacity)
 });
 const colorReliefUniformValues = (layer, dem) => {
@@ -54043,8 +54112,8 @@ const colorReliefUniformValues = (layer, dem) => {
         'u_image': 0,
         'u_unpack': dem.getUnpackVector(),
         'u_dimension': [dem.stride, dem.stride],
-        'u_elevation_stops': layer.elevationStops,
-        'u_color_stops': layer.colorStops,
+        'u_elevation_stops': 1,
+        'u_color_stops': 4,
         'u_opacity': layer.paint.get('color-relief-opacity')
     };
 };
@@ -55977,7 +56046,7 @@ function createHeatmapFbo(context, width, height) {
 }
 function getColorRampTexture(context, layer) {
     if (!layer.colorRampTexture) {
-        layer.colorRampTexture = new Texture(context, layer.colorRamp, context.gl.RGBA);
+        layer.colorRampTexture = new performance$1.Texture(context, layer.colorRamp, context.gl.RGBA);
     }
     return layer.colorRampTexture;
 }
@@ -56070,7 +56139,7 @@ function drawLine(painter, sourceCache, layer, coords, renderOptions) {
                     layerGradient.texture.update(layerGradient.gradient);
                 }
                 else {
-                    layerGradient.texture = new Texture(context, layerGradient.gradient, gl.RGBA);
+                    layerGradient.texture = new performance$1.Texture(context, layerGradient.gradient, gl.RGBA);
                 }
                 layerGradient.version = layer.gradientVersion;
                 gradientTexture = layerGradient.texture;
@@ -56353,13 +56422,13 @@ function prepareHillshade(painter, sourceCache, tileIDs, layer, depthMode, stenc
             demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
         }
         else {
-            tile.demTexture = new Texture(context, pixelData, gl.RGBA, { premultiply: false });
+            tile.demTexture = new performance$1.Texture(context, pixelData, gl.RGBA, { premultiply: false });
             tile.demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
         }
         context.activeTexture.set(gl.TEXTURE0);
         let fbo = tile.fbo;
         if (!fbo) {
-            const renderTexture = new Texture(context, { width: tileSize, height: tileSize, data: null }, gl.RGBA);
+            const renderTexture = new performance$1.Texture(context, { width: tileSize, height: tileSize, data: null }, gl.RGBA);
             renderTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
             fbo = tile.fbo = context.createFramebuffer(tileSize, tileSize, true, false);
             fbo.colorAttachment.set(renderTexture.texture);
@@ -56401,12 +56470,21 @@ function renderColorRelief(painter, sourceCache, layer, coords, stencilModes, de
     const context = painter.context;
     const transform = painter.transform;
     const gl = context.gl;
-    const defines = [`#define NUM_ELEVATION_STOPS ${layer.elevationStops.length}`];
-    const program = painter.useProgram('colorRelief', null, false, defines);
+    const program = painter.useProgram('colorRelief');
     const align = !painter.options.moving;
+    let firstTile = true;
     for (const coord of coords) {
         const tile = sourceCache.getTile(coord);
         const dem = tile.dem;
+        if (firstTile) {
+            const maxLength = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+            const { elevationTexture, colorTexture } = layer.getColorRampTextures(context, maxLength, dem.getUnpackVector());
+            context.activeTexture.set(gl.TEXTURE1);
+            elevationTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
+            context.activeTexture.set(gl.TEXTURE4);
+            colorTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            firstTile = false;
+        }
         if (!dem || !dem.data) {
             continue;
         }
@@ -56418,11 +56496,11 @@ function renderColorRelief(painter, sourceCache, layer, coords, stencilModes, de
         if (tile.demTexture) {
             const demTexture = tile.demTexture;
             demTexture.update(pixelData, { premultiply: false });
-            demTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
         }
         else {
-            tile.demTexture = new Texture(context, pixelData, gl.RGBA, { premultiply: false });
-            tile.demTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            tile.demTexture = new performance$1.Texture(context, pixelData, gl.RGBA, { premultiply: false });
+            tile.demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
         }
         const mesh = projection.getMeshFromTileID(context, coord.canonical, useBorder, true, 'raster');
         const terrainData = (_a = painter.style.map.terrain) === null || _a === void 0 ? void 0 : _a.getTerrainData(coord);
@@ -57482,7 +57560,7 @@ class Painter {
             this.debugOverlayCanvas.width = 512;
             this.debugOverlayCanvas.height = 512;
             const gl = this.context.gl;
-            this.debugOverlayTexture = new Texture(this.context, this.debugOverlayCanvas, gl.RGBA);
+            this.debugOverlayTexture = new performance$1.Texture(this.context, this.debugOverlayCanvas, gl.RGBA);
         }
     }
     destroy() {
@@ -62228,9 +62306,9 @@ class Terrain {
         if (!this._emptyDemTexture) {
             const context = this.painter.context;
             const image = new performance$1.RGBAImage({ width: 1, height: 1 }, new Uint8Array(1 * 4));
-            this._emptyDepthTexture = new Texture(context, image, context.gl.RGBA, { premultiply: false });
+            this._emptyDepthTexture = new performance$1.Texture(context, image, context.gl.RGBA, { premultiply: false });
             this._emptyDemUnpack = [0, 0, 0, 0];
-            this._emptyDemTexture = new Texture(context, new performance$1.RGBAImage({ width: 1, height: 1 }), context.gl.RGBA, { premultiply: false });
+            this._emptyDemTexture = new performance$1.Texture(context, new performance$1.RGBAImage({ width: 1, height: 1 }), context.gl.RGBA, { premultiply: false });
             this._emptyDemTexture.bind(context.gl.NEAREST, context.gl.CLAMP_TO_EDGE);
             this._emptyDemMatrix = performance$1.identity([]);
         }
@@ -62242,7 +62320,7 @@ class Terrain {
             if (sourceTile.demTexture)
                 sourceTile.demTexture.update(sourceTile.dem.getPixels(), { premultiply: false });
             else
-                sourceTile.demTexture = new Texture(context, sourceTile.dem.getPixels(), context.gl.RGBA, { premultiply: false });
+                sourceTile.demTexture = new performance$1.Texture(context, sourceTile.dem.getPixels(), context.gl.RGBA, { premultiply: false });
             sourceTile.demTexture.bind(context.gl.NEAREST, context.gl.CLAMP_TO_EDGE);
             sourceTile.needsTerrainPrepare = false;
         }
@@ -62294,11 +62372,11 @@ class Terrain {
             delete this._fboCoordsTexture;
         }
         if (!this._fboCoordsTexture) {
-            this._fboCoordsTexture = new Texture(painter.context, { width, height, data: null }, painter.context.gl.RGBA, { premultiply: false });
+            this._fboCoordsTexture = new performance$1.Texture(painter.context, { width, height, data: null }, painter.context.gl.RGBA, { premultiply: false });
             this._fboCoordsTexture.bind(painter.context.gl.NEAREST, painter.context.gl.CLAMP_TO_EDGE);
         }
         if (!this._fboDepthTexture) {
-            this._fboDepthTexture = new Texture(painter.context, { width, height, data: null }, painter.context.gl.RGBA, { premultiply: false });
+            this._fboDepthTexture = new performance$1.Texture(painter.context, { width, height, data: null }, painter.context.gl.RGBA, { premultiply: false });
             this._fboDepthTexture.bind(painter.context.gl.NEAREST, painter.context.gl.CLAMP_TO_EDGE);
         }
         if (!this._fbo) {
@@ -62331,7 +62409,7 @@ class Terrain {
                 data[i + 3] = 0;
             }
         const image = new performance$1.RGBAImage({ width: this._coordsTextureSize, height: this._coordsTextureSize }, new Uint8Array(data.buffer));
-        const texture = new Texture(context, image, context.gl.RGBA, { premultiply: false });
+        const texture = new performance$1.Texture(context, image, context.gl.RGBA, { premultiply: false });
         texture.bind(context.gl.NEAREST, context.gl.CLAMP_TO_EDGE);
         this._coordsTexture = texture;
         return texture;
@@ -62516,7 +62594,7 @@ class RenderPool {
     }
     _createObject(id) {
         const fbo = this._context.createFramebuffer(this._tileSize, this._tileSize, true, true);
-        const texture = new Texture(this._context, { width: this._tileSize, height: this._tileSize, data: null }, this._context.gl.RGBA);
+        const texture = new performance$1.Texture(this._context, { width: this._tileSize, height: this._tileSize, data: null }, this._context.gl.RGBA);
         texture.bind(this._context.gl.LINEAR, this._context.gl.CLAMP_TO_EDGE);
         if (this._context.extTextureFilterAnisotropic) {
             this._context.gl.texParameterf(this._context.gl.TEXTURE_2D, this._context.extTextureFilterAnisotropic.TEXTURE_MAX_ANISOTROPY_EXT, this._context.extTextureFilterAnisotropicMax);
