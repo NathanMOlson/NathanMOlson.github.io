@@ -26267,6 +26267,13 @@ class RGBAImage {
     static copy(srcImg, dstImg, srcPt, dstPt, size) {
         copyImage(srcImg, dstImg, srcPt, dstPt, size, 4);
     }
+    setPixel(row, col, value) {
+        const rLocation = (row * this.width + col) * 4;
+        this.data[rLocation + 0] = Math.round(value.r * 255 / value.a);
+        this.data[rLocation + 1] = Math.round(value.g * 255 / value.a);
+        this.data[rLocation + 2] = Math.round(value.b * 255 / value.a);
+        this.data[rLocation + 3] = Math.round(value.a * 255);
+    }
 }
 register('AlphaImage', AlphaImage);
 register('RGBAImage', RGBAImage);
@@ -26285,12 +26292,7 @@ function renderColorRamp(params) {
     const renderPixel = (stride, index, progress) => {
         evaluationGlobals[params.evaluationKey] = progress;
         const pxColor = params.expression.evaluate(evaluationGlobals);
-        // the colors are being unpremultiplied because Color uses
-        // premultiplied values, and the Texture class expects unpremultiplied ones
-        image.data[stride + index + 0] = Math.floor(pxColor.r * 255 / pxColor.a);
-        image.data[stride + index + 1] = Math.floor(pxColor.g * 255 / pxColor.a);
-        image.data[stride + index + 2] = Math.floor(pxColor.b * 255 / pxColor.a);
-        image.data[stride + index + 3] = Math.floor(pxColor.a * 255);
+        image.setPixel(stride / 4 / width, index / 4, pxColor);
     };
     if (!params.clips) {
         for (let i = 0, j = 0; i < width; i++, j += 4) {
@@ -26642,7 +26644,16 @@ class ColorReliefStyleLayer extends StyleLayer {
     constructor(layer) {
         super(layer, properties$6);
     }
-    _createColorRamp() {
+    /**
+     * Create the color ramp, enforcing a maximum length for the vectors. This modifies the internal color ramp,
+     * so that the remapping is only performed once.
+     *
+     * @param maxLength - the maximum number of stops in the color ramp
+     *
+     * @return a `ColorRamp` object with no more than `maxLength` stops.
+     *
+     */
+    _createColorRamp(maxLength) {
         const colorRamp = { elevationStops: [], colorStops: [] };
         const expression = this._transitionablePaint._values['color-relief-color'].value.expression;
         if (expression instanceof ZoomConstantExpression && expression._styleExpression.expression instanceof Interpolate) {
@@ -26662,60 +26673,41 @@ class ColorReliefStyleLayer extends StyleLayer {
             colorRamp.elevationStops.push(colorRamp.elevationStops[0] + 1);
             colorRamp.colorStops.push(colorRamp.colorStops[0]);
         }
-        return colorRamp;
+        if (colorRamp.elevationStops.length <= maxLength) {
+            return colorRamp;
+        }
+        const remappedColorRamp = { elevationStops: [], colorStops: [] };
+        const remapStepSize = (colorRamp.elevationStops.length - 1) / (maxLength - 1);
+        for (let i = 0; i < colorRamp.elevationStops.length - 0.5; i += remapStepSize) {
+            remappedColorRamp.elevationStops.push(colorRamp.elevationStops[Math.round(i)]);
+            remappedColorRamp.colorStops.push(colorRamp.colorStops[Math.round(i)]);
+        }
+        warnOnce(`Too many colors in specification of ${this.id} color-relief layer, may not render properly.`);
+        return remappedColorRamp;
     }
     _colorRampChanged() {
         return this.colorRampExpression != this._transitionablePaint._values['color-relief-color'].value.expression;
     }
-    /**
-     * Get the color ramp, enforcing a maximum length for the vectors. This modifies the internal color ramp,
-     * so that the remapping is only performed once.
-     *
-     * @param maxLength - the maximum number of stops in the color ramp
-     *
-     * @return a `ColorRamp` object with no more than `maxLength` stops.
-     *
-     */
-    getColorRamp(maxLength) {
-        this.colorRamp = this._createColorRamp();
-        if (this.colorRamp.elevationStops.length > maxLength) {
-            const colorRamp = { elevationStops: [], colorStops: [] };
-            const remapStepSize = (this.colorRamp.elevationStops.length - 1) / (maxLength - 1);
-            for (let i = 0; i < this.colorRamp.elevationStops.length - 0.5; i += remapStepSize) {
-                colorRamp.elevationStops.push(this.colorRamp.elevationStops[Math.round(i)]);
-                colorRamp.colorStops.push(this.colorRamp.colorStops[Math.round(i)]);
-            }
-            warnOnce(`Too many colors in specification of ${this.id} color-relief layer, may not render properly.`);
-            this.colorRamp = colorRamp;
-        }
-        return this.colorRamp;
-    }
     getColorRampTextures(context, maxLength, unpackVector) {
-        if (!this.colorRampTextures || this._colorRampChanged()) {
-            const colorRamp = this.getColorRamp(maxLength);
-            const colorImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
-            const elevationImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
-            for (let i = 0; i < colorRamp.elevationStops.length; i++) {
-                const elevationPacked = packDEMData(colorRamp.elevationStops[i], unpackVector);
-                elevationImage.data[4 * i + 0] = elevationPacked.r;
-                elevationImage.data[4 * i + 1] = elevationPacked.g;
-                elevationImage.data[4 * i + 2] = elevationPacked.b;
-                elevationImage.data[4 * i + 3] = 255;
-                const pxColor = colorRamp.colorStops[i];
-                colorImage.data[4 * i + 0] = Math.round(pxColor.r * 255 / pxColor.a);
-                colorImage.data[4 * i + 1] = Math.round(pxColor.g * 255 / pxColor.a);
-                colorImage.data[4 * i + 2] = Math.round(pxColor.b * 255 / pxColor.a);
-                colorImage.data[4 * i + 3] = Math.round(pxColor.a * 255);
-            }
-            this.colorRampTextures = {
-                elevationTexture: new Texture(context, elevationImage, context.gl.RGBA),
-                colorTexture: new Texture(context, colorImage, context.gl.RGBA)
-            };
+        if (this.colorRampTextures && !this._colorRampChanged()) {
+            return this.colorRampTextures;
         }
+        const colorRamp = this._createColorRamp(maxLength);
+        const colorImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
+        const elevationImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
+        for (let i = 0; i < colorRamp.elevationStops.length; i++) {
+            const elevationPacked = packDEMData(colorRamp.elevationStops[i], unpackVector);
+            elevationImage.setPixel(0, i, new Color(elevationPacked.r / 255, elevationPacked.g / 255, elevationPacked.b / 255, 1));
+            colorImage.setPixel(0, i, colorRamp.colorStops[i]);
+        }
+        this.colorRampTextures = {
+            elevationTexture: new Texture(context, elevationImage, context.gl.RGBA),
+            colorTexture: new Texture(context, colorImage, context.gl.RGBA)
+        };
         return this.colorRampTextures;
     }
     hasOffscreenPass() {
-        return this.visibility !== 'none' && !!this.colorRamp;
+        return this.visibility !== 'none' && !!this.colorRampTextures;
     }
 }
 
@@ -47387,7 +47379,7 @@ var collisionCircleFrag = 'in float v_radius;in vec2 v_extrude;in float v_collis
 var collisionCircleVert = 'in vec2 a_pos;in float a_radius;in vec2 a_flags;uniform vec2 u_viewport_size;out float v_radius;out vec2 v_extrude;out float v_collision;void main() {float radius=a_radius;float collision=a_flags.x;float vertexIdx=a_flags.y;vec2 quadVertexOffset=vec2(mix(-1.0,1.0,float(vertexIdx >=2.0)),mix(-1.0,1.0,float(vertexIdx >=1.0 && vertexIdx <=2.0)));vec2 quadVertexExtent=quadVertexOffset*radius;float padding_factor=1.2;v_radius=radius;v_extrude=quadVertexExtent*padding_factor;v_collision=collision;gl_Position=vec4((a_pos/u_viewport_size*2.0-1.0)*vec2(1.0,-1.0),0.0,1.0)+vec4(quadVertexExtent*padding_factor/u_viewport_size*2.0,0.0,0.0);}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
-var colorReliefFrag = 'uniform sampler2D u_image;uniform vec4 u_unpack;uniform sampler2D u_elevation_stops;uniform sampler2D u_color_stops;uniform float u_opacity;in vec2 v_pos;float getElevation(vec2 coord) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}float getElevationStop(int stop) {float x=(float(stop)+0.5)/float(textureSize(u_elevation_stops,0)[0]);vec4 data=texture(u_elevation_stops,vec2(x,0))*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {float el=getElevation(v_pos);int num_elevation_stops=textureSize(u_elevation_stops,0)[0];int r=(num_elevation_stops-1);int l=0;float el_l=getElevationStop(l);float el_r=getElevationStop(r);while(r-l > 1){int m=(r+l)/2;float el_m=getElevationStop(m);if(el < el_m){r=m;el_r=el_m;}else\n{l=m;el_l=el_m;}}float x=(float(l)+(el-el_l)/(el_r-el_l)+0.5)/float(textureSize(u_color_stops,0)[0]);fragColor=u_opacity*texture(u_color_stops,vec2(x,0));\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
+var colorReliefFrag = 'uniform sampler2D u_image;uniform vec4 u_unpack;uniform sampler2D u_elevation_stops;uniform sampler2D u_color_stops;uniform float u_opacity;in vec2 v_pos;float getElevation(vec2 coord) {vec4 data=texture(u_image,coord)*255.0;data.a=-1.0;return dot(data,u_unpack);}float getElevationStop(int stop) {float x=(float(stop)+0.5)/float(textureSize(u_elevation_stops,0)[0]);vec4 data=texture(u_elevation_stops,vec2(x,0))*255.0;data.a=-1.0;return dot(data,u_unpack);}void main() {float el=getElevation(v_pos);int num_elevation_stops=textureSize(u_elevation_stops,0)[0];int r=(num_elevation_stops-1);int l=0;float el_l=getElevationStop(l);float el_r=getElevationStop(r);while(r-l > 1){int m=(r+l)/2;float el_m=getElevationStop(m);if(el < el_m){r=m;el_r=el_m;}else\n{l=m;el_l=el_m;}}vec4 color_l=texture(u_color_stops,vec2((float(l)+0.5)/float(num_elevation_stops),0));vec4 color_r=texture(u_color_stops,vec2((float(r)+0.5)/float(num_elevation_stops),0));fragColor=u_opacity*mix(color_l,color_r,clamp((el-el_l)/(el_r-el_l),0.0,1.0));\n#ifdef OVERDRAW_INSPECTOR\nfragColor=vec4(1.0);\n#endif\n}';
 
 // This file is generated. Edit build/generate-shaders.ts, then run `npm run codegen`.
 var colorReliefVert = 'uniform vec2 u_dimension;in vec2 a_pos;out vec2 v_pos;void main() {gl_Position=projectTile(a_pos,a_pos);highp vec2 epsilon=1.0/u_dimension;float scale=(u_dimension.x-2.0)/u_dimension.x;v_pos=(a_pos/8192.0)*scale+epsilon;if (a_pos.y <-32767.5) {v_pos.y=0.0;}if (a_pos.y > 32766.5) {v_pos.y=1.0;}}';
@@ -56987,7 +56979,7 @@ function renderColorRelief(painter, sourceCache, layer, coords, stencilModes, de
             context.activeTexture.set(gl.TEXTURE1);
             elevationTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
             context.activeTexture.set(gl.TEXTURE4);
-            colorTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
+            colorTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
             firstTile = false;
         }
         if (!dem || !dem.data) {
