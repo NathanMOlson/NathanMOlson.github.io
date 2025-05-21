@@ -8700,6 +8700,44 @@ function pointPlaneSignedDistance(plane, point) {
     return plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3];
 }
 /**
+ * Finds an intersection points of three planes. Returns `null` if no such (single) point exists.
+ * The planes *must* be in Hessian normal form - their xyz components must form a unit vector.
+ */
+function threePlaneIntersection(plane0, plane1, plane2) {
+    // https://mathworld.wolfram.com/Plane-PlaneIntersection.html
+    const det = determinant$1([
+        plane0[0], plane0[1], plane0[2],
+        plane1[0], plane1[1], plane1[2],
+        plane2[0], plane2[1], plane2[2]
+    ]);
+    if (det === 0) {
+        return null;
+    }
+    const cross12 = cross$2([], [plane1[0], plane1[1], plane1[2]], [plane2[0], plane2[1], plane2[2]]);
+    const cross20 = cross$2([], [plane2[0], plane2[1], plane2[2]], [plane0[0], plane0[1], plane0[2]]);
+    const cross01 = cross$2([], [plane0[0], plane0[1], plane0[2]], [plane1[0], plane1[1], plane1[2]]);
+    const sum = scale$4([], cross12, -plane0[3]);
+    add$4(sum, sum, scale$4([], cross20, -plane1[3]));
+    add$4(sum, sum, scale$4([], cross01, -plane2[3]));
+    scale$4(sum, sum, 1.0 / det);
+    return sum;
+}
+/**
+ * Returns a parameter `t` such that the point obtained by
+ * `origin + direction * t` lies on the given plane.
+ * If the ray is parallel to the plane, returns null.
+ * Returns a negative value if the ray is pointing away from the plane.
+ * Direction does not need to be normalized.
+ */
+function rayPlaneIntersection(origin, direction, plane) {
+    const dotOriginPlane = origin[0] * plane[0] + origin[1] * plane[1] + origin[2] * plane[2];
+    const dotDirectionPlane = direction[0] * plane[0] + direction[1] * plane[1] + direction[2] * plane[2];
+    if (dotDirectionPlane === 0) {
+        return null;
+    }
+    return (-dotOriginPlane - plane[3]) / dotDirectionPlane;
+}
+/**
  * Solves a quadratic equation in the form ax^2 + bx + c = 0 and returns its roots in no particular order.
  * Returns null if the equation has no roots or if it has infinitely many roots.
  */
@@ -22743,16 +22781,18 @@ class EvaluationParameters {
     constructor(zoom, options) {
         this.zoom = zoom;
         if (options) {
-            this.now = options.now;
-            this.fadeDuration = options.fadeDuration;
-            this.zoomHistory = options.zoomHistory;
-            this.transition = options.transition;
+            this.now = options.now || 0;
+            this.fadeDuration = options.fadeDuration || 0;
+            this.zoomHistory = options.zoomHistory || new ZoomHistory();
+            this.transition = options.transition || {};
+            this.globalState = options.globalState || {};
         }
         else {
             this.now = 0;
             this.fadeDuration = 0;
             this.zoomHistory = new ZoomHistory();
             this.transition = {};
+            this.globalState = {};
         }
     }
     isSupportedScript(str) {
@@ -22802,6 +22842,9 @@ class PropertyValue {
     }
     isDataDriven() {
         return this.expression.kind === 'source' || this.expression.kind === 'composite';
+    }
+    getGlobalStateRefs() {
+        return this.expression.globalStateRefs || new Set();
     }
     possiblyEvaluate(parameters, canonical, availableImages) {
         return this.property.possiblyEvaluate(this, parameters, canonical, availableImages);
@@ -23279,6 +23322,7 @@ class StyleLayer extends Evented {
             this.source = layer.source;
             this.sourceLayer = layer['source-layer'];
             this.filter = layer.filter;
+            this._featureFilter = featureFilter(layer.filter);
         }
         if (properties.layout) {
             this._unevaluatedLayout = new Layout(properties.layout);
@@ -23296,6 +23340,10 @@ class StyleLayer extends Evented {
             this.paint = new PossiblyEvaluated(properties.paint);
         }
     }
+    setFilter(filter) {
+        this.filter = filter;
+        this._featureFilter = featureFilter(filter);
+    }
     getCrossfadeParameters() {
         return this._crossfadeParameters;
     }
@@ -23304,6 +23352,26 @@ class StyleLayer extends Evented {
             return this.visibility;
         }
         return this._unevaluatedLayout.getValue(name);
+    }
+    /**
+     * Get list of global state references that are used within layout or filter properties.
+     * This is used to determine if layer source need to be reloaded when global state property changes.
+     *
+     */
+    getLayoutAffectingGlobalStateRefs() {
+        const globalStateRefs = new Set();
+        if (this._unevaluatedLayout) {
+            for (const propertyName in this._unevaluatedLayout._values) {
+                const value = this._unevaluatedLayout._values[propertyName];
+                for (const globalStateRef of value.getGlobalStateRefs()) {
+                    globalStateRefs.add(globalStateRef);
+                }
+            }
+        }
+        for (const globalStateRef of this._featureFilter.getGlobalStateRefs()) {
+            globalStateRefs.add(globalStateRef);
+        }
+        return globalStateRefs;
     }
     setLayoutProperty(name, value, options = {}) {
         if (value !== null && value !== undefined) {
@@ -25614,6 +25682,7 @@ function addCircleVertex(layoutVertexArray, x, y, extrudeX, extrudeY) {
 class CircleBucket {
     constructor(options) {
         this.zoom = options.zoom;
+        this.globalState = options.globalState;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
         this.layerIds = this.layers.map(layer => layer.id);
@@ -25644,7 +25713,7 @@ class CircleBucket {
         for (const { feature, id, index, sourceLayerIndex } of features) {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
-            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical))
+            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom, { globalState: this.globalState }), evaluationFeature, canonical))
                 continue;
             const sortKey = sortFeaturesByKey ?
                 circleSortKey.evaluate(evaluationFeature, {}, canonical) :
@@ -26577,6 +26646,7 @@ class ColorReliefStyleLayer extends StyleLayer {
         const colorRamp = { elevationStops: [], colorStops: [] };
         const expression = this._transitionablePaint._values['color-relief-color'].value.expression;
         if (expression instanceof ZoomConstantExpression && expression._styleExpression.expression instanceof Interpolate) {
+            this.colorRampExpression = expression;
             const interpolater = expression._styleExpression.expression;
             colorRamp.elevationStops = interpolater.labels;
             colorRamp.colorStops = [];
@@ -26594,6 +26664,9 @@ class ColorReliefStyleLayer extends StyleLayer {
         }
         return colorRamp;
     }
+    _colorRampChanged() {
+        return this.colorRampExpression != this._transitionablePaint._values['color-relief-color'].value.expression;
+    }
     /**
      * Get the color ramp, enforcing a maximum length for the vectors. This modifies the internal color ramp,
      * so that the remapping is only performed once.
@@ -26604,9 +26677,7 @@ class ColorReliefStyleLayer extends StyleLayer {
      *
      */
     getColorRamp(maxLength) {
-        if (!this.colorRamp) {
-            this.colorRamp = this._createColorRamp();
-        }
+        this.colorRamp = this._createColorRamp();
         if (this.colorRamp.elevationStops.length > maxLength) {
             const colorRamp = { elevationStops: [], colorStops: [] };
             const remapStepSize = (this.colorRamp.elevationStops.length - 1) / (maxLength - 1);
@@ -26620,7 +26691,7 @@ class ColorReliefStyleLayer extends StyleLayer {
         return this.colorRamp;
     }
     getColorRampTextures(context, maxLength, unpackVector) {
-        if (!this.colorRampTextures) {
+        if (!this.colorRampTextures || this._colorRampChanged()) {
             const colorRamp = this.getColorRamp(maxLength);
             const colorImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
             const elevationImage = new RGBAImage({ width: colorRamp.colorStops.length, height: 1 });
@@ -28440,6 +28511,7 @@ const EARCUT_MAX_RINGS$1 = 500;
 class FillBucket {
     constructor(options) {
         this.zoom = options.zoom;
+        this.globalState = options.globalState;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
         this.layerIds = this.layers.map(layer => layer.id);
@@ -28462,7 +28534,7 @@ class FillBucket {
         for (const { feature, id, index, sourceLayerIndex } of features) {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
-            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical))
+            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom, { globalState: this.globalState }), evaluationFeature, canonical))
                 continue;
             const sortKey = sortFeaturesByKey ?
                 fillSortKey.evaluate(evaluationFeature, {}, canonical, options.availableImages) :
@@ -28967,6 +29039,7 @@ function addVertex$1(vertexArray, x, y, nx, ny, nz, t, e) {
 class FillExtrusionBucket {
     constructor(options) {
         this.zoom = options.zoom;
+        this.globalState = options.globalState;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
         this.layerIds = this.layers.map(layer => layer.id);
@@ -28985,7 +29058,7 @@ class FillExtrusionBucket {
         for (const { feature, id, index, sourceLayerIndex } of features) {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
-            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical))
+            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom, { globalState: this.globalState }), evaluationFeature, canonical))
                 continue;
             const bucketFeature = {
                 id,
@@ -29388,6 +29461,7 @@ const MAX_LINE_DISTANCE = Math.pow(2, LINE_DISTANCE_BUFFER_BITS - 1) / LINE_DIST
 class LineBucket {
     constructor(options) {
         this.zoom = options.zoom;
+        this.globalState = options.globalState;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
         this.layerIds = this.layers.map(layer => layer.id);
@@ -29415,7 +29489,7 @@ class LineBucket {
         for (const { feature, id, index, sourceLayerIndex } of features) {
             const needGeometry = this.layers[0]._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
-            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom), evaluationFeature, canonical))
+            if (!this.layers[0]._featureFilter.filter(new EvaluationParameters(this.zoom, { globalState: this.globalState }), evaluationFeature, canonical))
                 continue;
             const sortKey = sortFeaturesByKey ?
                 lineSortKey.evaluate(evaluationFeature, {}, canonical) :
@@ -32098,6 +32172,7 @@ class SymbolBucket {
     constructor(options) {
         this.collisionBoxArray = options.collisionBoxArray;
         this.zoom = options.zoom;
+        this.globalState = options.globalState;
         this.overscaling = options.overscaling;
         this.layers = options.layers;
         this.layerIds = this.layers.map(layer => layer.id);
@@ -32171,7 +32246,7 @@ class SymbolBucket {
         const icons = options.iconDependencies;
         const stacks = options.glyphDependencies;
         const availableImages = options.availableImages;
-        const globalProperties = new EvaluationParameters(this.zoom);
+        const globalProperties = new EvaluationParameters(this.zoom, { globalState: this.globalState });
         for (const { feature, id, index, sourceLayerIndex } of features) {
             const needGeometry = layer._featureFilter.needGeometry;
             const evaluationFeature = toEvaluationFeature(feature, needGeometry);
@@ -35910,6 +35985,7 @@ exports.extend = extend;
 exports.featureFilter = featureFilter;
 exports.filterObject = filterObject;
 exports.findLineIntersection = findLineIntersection;
+exports.fromEuler = fromEuler;
 exports.fromRotation = fromRotation$2;
 exports.fromScaling = fromScaling;
 exports.getAABB = getAABB;
@@ -35978,6 +36054,7 @@ exports.pointPlaneSignedDistance = pointPlaneSignedDistance;
 exports.polygonIntersectsPolygon = polygonIntersectsPolygon;
 exports.potpack = potpack;
 exports.radiansToDegrees = radiansToDegrees;
+exports.rayPlaneIntersection = rayPlaneIntersection;
 exports.readImageUsingVideoFrame = readImageUsingVideoFrame;
 exports.register = register;
 exports.remapSaturate = remapSaturate;
@@ -36000,6 +36077,7 @@ exports.sameOrigin = sameOrigin;
 exports.scale = scale$5;
 exports.scale$1 = scale;
 exports.scale$2 = scale$4;
+exports.scale$3 = scale$3;
 exports.scaleAndAdd = scaleAndAdd$2;
 exports.scaleZoom = scaleZoom;
 exports.slerp = slerp;
@@ -36007,11 +36085,13 @@ exports.sphericalToCartesian = sphericalToCartesian;
 exports.sqrLen = sqrLen;
 exports.sub = sub$2;
 exports.subscribe = subscribe;
+exports.threePlaneIntersection = threePlaneIntersection;
 exports.toEvaluationFeature = toEvaluationFeature;
 exports.transformMat3 = transformMat3$1;
 exports.transformMat4 = transformMat4$1;
 exports.transformMat4$1 = transformMat4$2;
 exports.transformMat4$2 = transformMat4;
+exports.transformQuat = transformQuat$1;
 exports.translate = translate$2;
 exports.translatePosition = translatePosition;
 exports.unicodeBlockLookup = unicodeBlockLookup;
@@ -36133,6 +36213,7 @@ class WorkerTile {
         this.returnDependencies = !!params.returnDependencies;
         this.promoteId = params.promoteId;
         this.inFlightDependencies = [];
+        this.globalState = params.globalState;
     }
     parse(data, layerIndex, availableImages, actor, subdivisionGranularity) {
         return performance.__awaiter(this, void 0, void 0, function* () {
@@ -36188,7 +36269,8 @@ class WorkerTile {
                         overscaling: this.overscaling,
                         collisionBoxArray: this.collisionBoxArray,
                         sourceLayerIndex,
-                        sourceID: this.source
+                        sourceID: this.source,
+                        globalState: this.globalState
                     });
                     bucket.populate(features, options, this.tileID.canonical);
                     featureIndex.bucketLayerIDs.push(family.map((l) => l.id));
@@ -36385,6 +36467,7 @@ class VectorTileWorkerSource {
             }
             const workerTile = this.loaded[uid];
             workerTile.showCollisionBoxes = params.showCollisionBoxes;
+            workerTile.globalState = params.globalState;
             if (workerTile.status === 'parsing') {
                 const result = yield workerTile.parse(workerTile.vectorTile, this.layerIndex, this.availableImages, this.actor, params.subdivisionGranularity);
                 // if we have cancelled the original parse, make sure to pass the rawTileData from the original fetch
@@ -41173,7 +41256,8 @@ class VectorTileSource extends performance$1.Evented {
                 pixelRatio: this.map.getPixelRatio(),
                 showCollisionBoxes: this.map.showCollisionBoxes,
                 promoteId: this.promoteId,
-                subdivisionGranularity: this.map.style.projection.subdivisionGranularity
+                subdivisionGranularity: this.map.style.projection.subdivisionGranularity,
+                globalState: this.map.getGlobalState()
             };
             params.request.collectResourceTiming = this._collectResourceTiming;
             let messageType = "RT" /* MessageType.reloadTile */;
@@ -41920,7 +42004,8 @@ class GeoJSONSource extends performance$1.Evented {
                 pixelRatio: this.map.getPixelRatio(),
                 showCollisionBoxes: this.map.showCollisionBoxes,
                 promoteId: this.promoteId,
-                subdivisionGranularity: this.map.style.projection.subdivisionGranularity
+                subdivisionGranularity: this.map.style.projection.subdivisionGranularity,
+                globalState: this.map.getGlobalState()
             };
             tile.abortController = new AbortController();
             const data = yield this.actor.sendAsync({ type: message, data: params }, tile.abortController);
@@ -43438,13 +43523,13 @@ function cameraMercatorCoordinateFromCenterAndRotation(center, elevation, pitch,
  * A simple/heuristic function that returns whether the tile is visible under the current transform.
  * @returns an {@link IntersectionResult}.
  */
-function isTileVisible(frustum, aabb, plane) {
-    const frustumTest = aabb.intersectsFrustum(frustum);
-    if (!plane) {
+function isTileVisible(frustum, tileBoundingVolume, plane) {
+    const frustumTest = tileBoundingVolume.intersectsFrustum(frustum);
+    if (!plane || frustumTest === 0 /* IntersectionResult.None */) {
         return frustumTest;
     }
-    const planeTest = aabb.intersectsPlane(plane);
-    if (frustumTest === 0 /* IntersectionResult.None */ || planeTest === 0 /* IntersectionResult.None */) {
+    const planeTest = tileBoundingVolume.intersectsPlane(plane);
+    if (planeTest === 0 /* IntersectionResult.None */) {
         return 0 /* IntersectionResult.None */;
     }
     if (frustumTest === 2 /* IntersectionResult.Full */ && planeTest === 2 /* IntersectionResult.Full */) {
@@ -43567,15 +43652,15 @@ function coveringTiles(transform, options) {
         const y = it.y;
         let fullyVisible = it.fullyVisible;
         const tileID = { x, y, z: it.zoom };
-        const aabb = detailsProvider.getTileAABB(tileID, it.wrap, transform.elevation, options);
+        const boundingVolume = detailsProvider.getTileBoundingVolume(tileID, it.wrap, transform.elevation, options);
         // Visibility of a tile is not required if any of its ancestor is fully visible
         if (!fullyVisible) {
-            const intersectResult = isTileVisible(frustum, aabb, plane);
+            const intersectResult = isTileVisible(frustum, boundingVolume, plane);
             if (intersectResult === 0 /* IntersectionResult.None */)
                 continue;
             fullyVisible = intersectResult === 2 /* IntersectionResult.Full */;
         }
-        const distToTile2d = detailsProvider.distanceToTile2d(cameraCoord.x, cameraCoord.y, tileID, aabb);
+        const distToTile2d = detailsProvider.distanceToTile2d(cameraCoord.x, cameraCoord.y, tileID, boundingVolume);
         let thisTileDesiredZ = desiredZ;
         if (allowVariableZoom) {
             const tileZoomFunc = options.calculateTileZoom || defaultCalculateTileZoom;
@@ -48343,7 +48428,7 @@ class Aabb {
 }
 
 class MercatorCoveringTilesDetailsProvider {
-    distanceToTile2d(pointX, pointY, tileID, aabb) {
+    distanceToTile2d(pointX, pointY, _tileID, aabb) {
         const distanceX = aabb.distanceX([pointX, pointY]);
         const distanceY = aabb.distanceY([pointX, pointY]);
         return Math.hypot(distanceX, distanceY);
@@ -48358,11 +48443,11 @@ class MercatorCoveringTilesDetailsProvider {
      * Returns the AABB of the specified tile.
      * @param tileID - Tile x, y and z for zoom.
      */
-    getTileAABB(tileID, wrap, elevation, options) {
+    getTileBoundingVolume(tileID, wrap, elevation, options) {
         var _a, _b;
         let minElevation = elevation;
         let maxElevation = elevation;
-        if (options.terrain) {
+        if (options === null || options === void 0 ? void 0 : options.terrain) {
             const overscaledTileID = new performance$1.OverscaledTileID(tileID.z, wrap, tileID.z, tileID.x, tileID.y);
             const minMax = options.terrain.getMinMaxElevation(overscaledTileID);
             minElevation = (_a = minMax.minElevation) !== null && _a !== void 0 ? _a : elevation;
@@ -48379,7 +48464,7 @@ class MercatorCoveringTilesDetailsProvider {
     allowWorldCopies() {
         return true;
     }
-    recalculateCache() {
+    prepareNextFrame() {
         // Do nothing
     }
 }
@@ -48390,7 +48475,7 @@ class Frustum {
         this.planes = planes;
         this.aabb = aabb;
     }
-    static fromInvProjectionMatrix(invProj, worldSize = 1, zoom = 0) {
+    static fromInvProjectionMatrix(invProj, worldSize = 1, zoom = 0, horizonPlane, flippedNearFar) {
         const clipSpaceCorners = [
             [-1, 1, -1, 1],
             [1, 1, -1, 1],
@@ -48401,14 +48486,16 @@ class Frustum {
             [1, -1, 1, 1],
             [-1, -1, 1, 1]
         ];
-        const scale = Math.pow(2, zoom);
-        // Transform frustum corner points from clip space to tile space, Z to meters
-        const frustumCoords = clipSpaceCorners.map(v => {
-            v = performance$1.transformMat4([], v, invProj);
-            const s = 1.0 / v[3] / worldSize * scale;
-            return performance$1.mul(v, v, [s, s, 1.0 / v[3], s]);
-        });
-        const frustumPlanePointIndices = [
+        // Globe and mercator projection matrices have different Y directions, hence we need different sets of indices.
+        // This should be fixed in the future.
+        const frustumPlanePointIndices = flippedNearFar ? [
+            [6, 5, 4], // near
+            [0, 1, 2], // far
+            [0, 3, 7], // left
+            [2, 1, 5], // right
+            [3, 2, 6], // bottom
+            [0, 4, 5] // top
+        ] : [
             [0, 1, 2], // near
             [6, 5, 4], // far
             [0, 3, 7], // left
@@ -48416,6 +48503,13 @@ class Frustum {
             [3, 2, 6], // bottom
             [0, 4, 5] // top
         ];
+        const scale = Math.pow(2, zoom);
+        // Transform frustum corner points from clip space to tile space, Z to meters
+        const frustumCoords = clipSpaceCorners.map(v => unprojectClipSpacePoint(v, invProj, worldSize, scale));
+        if (horizonPlane) {
+            // A horizon clipping plane was supplied.
+            adjustFarPlaneByHorizonPlane(frustumCoords, frustumPlanePointIndices[0], horizonPlane, flippedNearFar);
+        }
         const frustumPlanes = frustumPlanePointIndices.map((p) => {
             const a = performance$1.sub([], frustumCoords[p[0]], frustumCoords[p[1]]);
             const b = performance$1.sub([], frustumCoords[p[2]], frustumCoords[p[1]]);
@@ -48432,6 +48526,104 @@ class Frustum {
             }
         }
         return new Frustum(frustumCoords, frustumPlanes, new Aabb(min, max));
+    }
+}
+function unprojectClipSpacePoint(point, invProj, worldSize, scale) {
+    const v = performance$1.transformMat4([], point, invProj);
+    const s = 1.0 / v[3] / worldSize * scale;
+    return performance$1.mul(v, v, [s, s, 1.0 / v[3], s]);
+}
+/**
+ * Modifies points in the supplied `frustumCoords` array so that the frustum's far plane only lies as far as the horizon,
+ * which improves frustum culling effectiveness.
+ * @param frustumCoords - Points of the frustum.
+ * @param nearPlanePointsIndices - Which indices in the `frustumCoords` form the near plane.
+ * @param horizonPlane - The horizon plane.
+ */
+function adjustFarPlaneByHorizonPlane(frustumCoords, nearPlanePointsIndices, horizonPlane, flippedNearFar) {
+    // For each of the 4 edges from near to far plane,
+    // we find at which distance these edges intersect the given clipping plane,
+    // select the maximal value from these distances and then we move
+    // the frustum's far plane so that it is at most as far away from the near plane
+    // as this maximal distance.
+    const nearPlanePointsOffset = flippedNearFar ? 4 : 0;
+    const farPlanePointsOffset = flippedNearFar ? 0 : 4;
+    let maxDist = 0;
+    const cornerRayLengths = [];
+    const cornerRayNormalizedDirections = [];
+    for (let i = 0; i < 4; i++) {
+        const dir = performance$1.sub([], frustumCoords[i + farPlanePointsOffset], frustumCoords[i + nearPlanePointsOffset]);
+        const len = performance$1.length$1(dir);
+        performance$1.scale$2(dir, dir, 1.0 / len); // normalize
+        cornerRayLengths.push(len);
+        cornerRayNormalizedDirections.push(dir);
+    }
+    for (let i = 0; i < 4; i++) {
+        const dist = performance$1.rayPlaneIntersection(frustumCoords[i + nearPlanePointsOffset], cornerRayNormalizedDirections[i], horizonPlane);
+        if (dist !== null && dist >= 0) {
+            maxDist = Math.max(maxDist, dist);
+        }
+        else {
+            // Use the original ray length for rays parallel to the horizon plane, or for rays pointing away from it.
+            maxDist = Math.max(maxDist, cornerRayLengths[i]);
+        }
+    }
+    // Compute the near plane.
+    // We use its normal as the "view vector" - direction in which the camera is looking.
+    const nearPlaneNormalized = getNormalizedNearPlane(frustumCoords, nearPlanePointsIndices);
+    // We also try to adjust the far plane position so that it exactly intersects the point on the horizon
+    // that is most distant from the near plane.
+    const idealFarPlaneDistanceFromNearPlane = getIdealNearFarPlaneDistance(horizonPlane, nearPlaneNormalized);
+    if (idealFarPlaneDistanceFromNearPlane !== null) {
+        const idealCornerRayLength = idealFarPlaneDistanceFromNearPlane / performance$1.dot(cornerRayNormalizedDirections[0], nearPlaneNormalized); // dot(near plane, ray dir) is the same for all 4 corners
+        maxDist = Math.min(maxDist, idealCornerRayLength);
+    }
+    for (let i = 0; i < 4; i++) {
+        const targetLength = Math.min(maxDist, cornerRayLengths[i]);
+        const newPoint = [
+            frustumCoords[i + nearPlanePointsOffset][0] + cornerRayNormalizedDirections[i][0] * targetLength,
+            frustumCoords[i + nearPlanePointsOffset][1] + cornerRayNormalizedDirections[i][1] * targetLength,
+            frustumCoords[i + nearPlanePointsOffset][2] + cornerRayNormalizedDirections[i][2] * targetLength,
+            1,
+        ];
+        frustumCoords[i + farPlanePointsOffset] = newPoint;
+    }
+}
+/**
+ * Returns the near plane equation with unit length direction.
+ * @param frustumCoords - Points of the frustum.
+ * @param nearPlanePointsIndices - Which indices in the `frustumCoords` form the near plane.
+ */
+function getNormalizedNearPlane(frustumCoords, nearPlanePointsIndices) {
+    const nearPlaneA = performance$1.sub([], frustumCoords[nearPlanePointsIndices[0]], frustumCoords[nearPlanePointsIndices[1]]);
+    const nearPlaneB = performance$1.sub([], frustumCoords[nearPlanePointsIndices[2]], frustumCoords[nearPlanePointsIndices[1]]);
+    const nearPlaneNormalized = [0, 0, 0, 0];
+    performance$1.normalize(nearPlaneNormalized, performance$1.cross([], nearPlaneA, nearPlaneB));
+    nearPlaneNormalized[3] = -performance$1.dot(nearPlaneNormalized, frustumCoords[nearPlanePointsIndices[0]]);
+    return nearPlaneNormalized;
+}
+/**
+ * Returns the ideal distance between the frustum's near and far plane so that the far plane only lies as far as the horizon.
+ */
+function getIdealNearFarPlaneDistance(horizonPlane, nearPlaneNormalized) {
+    // Normalize the horizon plane to unit direction
+    const horizonPlaneLen = performance$1.len(horizonPlane);
+    const normalizedHorizonPlane = performance$1.scale$3([], horizonPlane, 1 / horizonPlaneLen);
+    // Project the view vector onto the horizon plane
+    const projectedViewDirection = performance$1.sub([], nearPlaneNormalized, performance$1.scale$2([], normalizedHorizonPlane, performance$1.dot(nearPlaneNormalized, normalizedHorizonPlane)));
+    const projectedViewLength = performance$1.len(projectedViewDirection);
+    // projectedViewLength will be 0 if the camera is looking straight down
+    if (projectedViewLength > 0) {
+        // Find the radius and center of the horizon circle (the horizon circle is the intersection of the planet's sphere and the horizon plane).
+        const horizonCircleRadius = Math.sqrt(1 - normalizedHorizonPlane[3] * normalizedHorizonPlane[3]);
+        const horizonCircleCenter = performance$1.scale$2([], normalizedHorizonPlane, -normalizedHorizonPlane[3]); // The horizon plane normal always points towards the camera.
+        // Find the furthest point on the horizon circle from the near plane.
+        const pointFurthestOnHorizonCircle = performance$1.add([], horizonCircleCenter, performance$1.scale$2([], projectedViewDirection, horizonCircleRadius / projectedViewLength));
+        // Compute this point's distance from the near plane.
+        return performance$1.pointPlaneSignedDistance(nearPlaneNormalized, pointFurthestOnHorizonCircle);
+    }
+    else {
+        return null;
     }
 }
 
@@ -50154,21 +50346,20 @@ function interpolateLngLatForGlobe(start, deltaLng, deltaLat, t) {
     }
 }
 
-class AabbCache {
-    constructor(aabbFactory) {
+class BoundingVolumeCache {
+    constructor(boundingVolumeFactory) {
         this._cachePrevious = new Map();
         this._cache = new Map();
         this._hadAnyChanges = false;
-        this._aabbFactory = aabbFactory;
+        this._boundingVolumeFactory = boundingVolumeFactory;
     }
     /**
-     * Prepares AABB cache for next frame. Call at the beginning of a frame.
-     * Any tile accesses in the last frame is kept in the cache, other tiles are deleted.
-     * @returns
+     * Prepares bounding volume cache for next frame. Call at the beginning of a frame.
+     * Bounding volume of any tile accesses in the last frame is kept in the cache, other (unaccessed) bounding volumes are deleted.
      */
-    recalculateCache() {
+    swapBuffers() {
         if (!this._hadAnyChanges) {
-            // If no new boxes were added this frame, no need to conserve memory, do not clear caches.
+            // If no new bounding volumes were added this frame, no need to conserve memory, do not clear caches.
             return;
         }
         const oldCache = this._cachePrevious;
@@ -50178,11 +50369,11 @@ class AabbCache {
         this._hadAnyChanges = false;
     }
     /**
-     * Returns the AABB of the specified tile, fetching it from cache or creating it using the factory function if needed.
+     * Returns the bounding volume of the specified tile, fetching it from cache or creating it using the factory function if needed.
      * @param tileID - Tile x, y and z for zoom.
      */
-    getTileAABB(tileID, wrap, elevation, options) {
-        const key = `${tileID.z}_${tileID.x}_${tileID.y}`;
+    getTileBoundingVolume(tileID, wrap, elevation, options) {
+        const key = `${tileID.z}_${tileID.x}_${tileID.y}_${(options === null || options === void 0 ? void 0 : options.terrain) ? 't' : ''}`;
         const cached = this._cache.get(key);
         if (cached) {
             return cached;
@@ -50192,10 +50383,164 @@ class AabbCache {
             this._cache.set(key, cachedPrevious);
             return cachedPrevious;
         }
-        const aabb = this._aabbFactory(tileID, wrap, elevation, options);
-        this._cache.set(key, aabb);
+        const boundingVolume = this._boundingVolumeFactory(tileID, wrap, elevation, options);
+        this._cache.set(key, boundingVolume);
         this._hadAnyChanges = true;
-        return aabb;
+        return boundingVolume;
+    }
+}
+
+/**
+ * A general convex bounding volume, defined by a set of points.
+ */
+class ConvexVolume {
+    /**
+     * Creates an instance of a general convex bounding volume.
+     * Note that the provided points array is used *as is*, its contents are not copied!
+     *
+     * Additionally, an AABB must be provided for rejecting frustum intersections.
+     * This AABB does not need to bound this convex volume (it may be smaller),
+     * but it *must* accurately bound the actual shape this volume is approximating.
+     * @param points - Points forming the convex shape. Note that this array reference is used *as is*, its contents are not copied!
+     * @param min - The bounding AABB's min point.
+     * @param max - The bounding AABB's min point.
+     */
+    constructor(points, planes, min, max) {
+        this.min = min;
+        this.max = max;
+        this.points = points;
+        this.planes = planes;
+    }
+    /**
+     * Creates a convex BV equivalent to the specified AABB.
+     * @param min - The AABB's min point.
+     * @param max - The AABB's max point.
+     */
+    static fromAabb(min, max) {
+        const points = [];
+        for (let i = 0; i < 8; i++) {
+            points.push([
+                ((i >> 0) & 1) === 1 ? max[0] : min[0],
+                ((i >> 1) & 1) === 1 ? max[1] : min[1],
+                ((i >> 2) & 1) === 1 ? max[2] : min[2]
+            ]);
+        }
+        return new ConvexVolume(points, [
+            [-1, 0, 0, max[0]],
+            [1, 0, 0, -min[0]],
+            [0, -1, 0, max[1]],
+            [0, 1, 0, -min[1]],
+            [0, 0, -1, max[2]],
+            [0, 0, 1, -min[2]]
+        ], min, max);
+    }
+    /**
+     * Creates a convex bounding volume that is actually an oriented bounding box created from the specified center, half-size and rotation angles.
+     * @param center - Center of the OBB.
+     * @param halfSize - The half-size of the OBB in each axis. The box will extend by this value in each direction for the given axis.
+     * @param angles - The rotation of the box. Euler angles, in degrees.
+     */
+    static fromCenterSizeAngles(center, halfSize, angles) {
+        const q = performance$1.fromEuler([], angles[0], angles[1], angles[2]);
+        const axisX = performance$1.transformQuat([], [halfSize[0], 0, 0], q);
+        const axisY = performance$1.transformQuat([], [0, halfSize[1], 0], q);
+        const axisZ = performance$1.transformQuat([], [0, 0, halfSize[2]], q);
+        // Find the AABB min/max
+        const min = [...center];
+        const max = [...center];
+        for (let i = 0; i < 8; i++) {
+            for (let axis = 0; axis < 3; axis++) {
+                const point = center[axis]
+                    + axisX[axis] * ((((i >> 0) & 1) === 1) ? 1 : -1)
+                    + axisY[axis] * ((((i >> 1) & 1) === 1) ? 1 : -1)
+                    + axisZ[axis] * ((((i >> 2) & 1) === 1) ? 1 : -1);
+                min[axis] = Math.min(min[axis], point);
+                max[axis] = Math.max(max[axis], point);
+            }
+        }
+        const points = [];
+        for (let i = 0; i < 8; i++) {
+            const p = [...center];
+            performance$1.add(p, p, performance$1.scale$2([], axisX, ((i >> 0) & 1) === 1 ? 1 : -1));
+            performance$1.add(p, p, performance$1.scale$2([], axisY, ((i >> 1) & 1) === 1 ? 1 : -1));
+            performance$1.add(p, p, performance$1.scale$2([], axisZ, ((i >> 2) & 1) === 1 ? 1 : -1));
+            points.push(p);
+        }
+        return new ConvexVolume(points, [
+            [...axisX, -performance$1.dot(axisX, points[0])],
+            [...axisY, -performance$1.dot(axisY, points[0])],
+            [...axisZ, -performance$1.dot(axisZ, points[0])],
+            [-axisX[0], -axisX[1], -axisX[2], -performance$1.dot(axisX, points[7])],
+            [-axisY[0], -axisY[1], -axisY[2], -performance$1.dot(axisY, points[7])],
+            [-axisZ[0], -axisZ[1], -axisZ[2], -performance$1.dot(axisZ, points[7])],
+        ], min, max);
+    }
+    /**
+     * Performs an approximate frustum-obb intersection test.
+     */
+    intersectsFrustum(frustum) {
+        // Performance-critical
+        let fullyInside = true;
+        const boxPointCount = this.points.length;
+        const boxPlaneCount = this.planes.length;
+        const frustumPlaneCount = frustum.planes.length;
+        const frustumPointCount = frustum.points.length;
+        // Test whether this volume's points are inside the frustum
+        for (let i = 0; i < frustumPlaneCount; i++) {
+            const plane = frustum.planes[i];
+            let boxPointsPassed = 0;
+            for (let j = 0; j < boxPointCount; j++) {
+                const point = this.points[j];
+                // Get point-plane distance sign
+                if (plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3] >= 0) {
+                    boxPointsPassed++;
+                }
+            }
+            if (boxPointsPassed === 0) {
+                return 0 /* IntersectionResult.None */;
+            }
+            if (boxPointsPassed < boxPointCount) {
+                fullyInside = false;
+            }
+        }
+        if (fullyInside) {
+            return 2 /* IntersectionResult.Full */;
+        }
+        // Test whether the frustum's points are inside this volume.
+        for (let i = 0; i < boxPlaneCount; i++) {
+            const plane = this.planes[i];
+            let frustumPointsPassed = 0;
+            for (let j = 0; j < frustumPointCount; j++) {
+                const point = frustum.points[j];
+                if (plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3] >= 0) {
+                    frustumPointsPassed++;
+                }
+            }
+            if (frustumPointsPassed === 0) {
+                return 0 /* IntersectionResult.None */;
+            }
+        }
+        return 1 /* IntersectionResult.Partial */;
+    }
+    /**
+     * Performs an intersection test with a halfspace.
+     */
+    intersectsPlane(plane) {
+        const pointCount = this.points.length;
+        let positivePoints = 0;
+        for (let i = 0; i < pointCount; i++) {
+            const point = this.points[i];
+            if (plane[0] * point[0] + plane[1] * point[1] + plane[2] * point[2] + plane[3] >= 0) {
+                positivePoints++;
+            }
+        }
+        if (positivePoints === pointCount) {
+            return 2 /* IntersectionResult.Full */;
+        }
+        if (positivePoints === 0) {
+            return 0 /* IntersectionResult.None */;
+        }
+        return 1 /* IntersectionResult.Partial */;
     }
 }
 
@@ -50229,13 +50574,13 @@ function distanceToTileWrapX(pointX, pointY, tileCornerX, tileCornerY, tileSize)
 }
 class GlobeCoveringTilesDetailsProvider {
     constructor() {
-        this._aabbCache = new AabbCache(this._computeTileAABB);
+        this._boundingVolumeCache = new BoundingVolumeCache(this._computeTileBoundingVolume);
     }
     /**
-     * Prepares the internal AABB cache for the next frame.
+     * Prepares the internal bounding volume cache for the next frame.
      */
-    recalculateCache() {
-        this._aabbCache.recalculateCache();
+    prepareNextFrame() {
+        this._boundingVolumeCache.swapBuffers();
     }
     /**
      * Returns the distance of a point to a square tile. If the point is inside the tile, returns 0.
@@ -50243,7 +50588,7 @@ class GlobeCoveringTilesDetailsProvider {
      * Handles distances on a sphere correctly: X is wrapped when crossing the antimeridian,
      * when crossing the poles Y is mirrored and X is shifted by half world size.
      */
-    distanceToTile2d(pointX, pointY, tileID, _aabb) {
+    distanceToTile2d(pointX, pointY, tileID, _bv) {
         const scale = 1 << tileID.z;
         const tileMercatorSize = 1.0 / scale;
         const tileCornerX = tileID.x / scale; // In range 0..1
@@ -50284,78 +50629,174 @@ class GlobeCoveringTilesDetailsProvider {
     allowWorldCopies() {
         return false;
     }
-    getTileAABB(tileID, wrap, elevation, options) {
-        return this._aabbCache.getTileAABB(tileID, wrap, elevation, options);
+    getTileBoundingVolume(tileID, wrap, elevation, options) {
+        return this._boundingVolumeCache.getTileBoundingVolume(tileID, wrap, elevation, options);
     }
-    _computeTileAABB(tileID, _wrap, _elevation, _options) {
-        // We can get away with only checking the 4 tile corners for AABB construction, because for any tile of zoom level 2 or higher
-        // it holds that the extremes (minimal or maximal value) of X, Y or Z coordinates must lie in one of the tile corners.
-        //
-        // To see why this holds, consider the formula for computing X,Y and Z from angular coordinates.
-        // It goes something like this:
-        //
-        // X = sin(lng) * cos(lat)
-        // Y = sin(lat)
-        // Z = cos(lng) * cos(lat)
-        //
-        // Note that a tile always covers a continuous range of lng and lat values,
-        // and that tiles that border the mercator north/south edge are assumed to extend all the way to the poles.
-        //
-        // We will consider each coordinate separately and show that an extreme must always lie in a tile corner for every axis, and must not lie inside the tile.
-        //
-        // For Y, it is clear that the only way for an extreme to not lie on an edge of the lat range is for the range to contain lat=90° or lat=-90° without either being the tile edge.
-        // This cannot happen for any tile, these latitudes will always:
-        // - either lie outside the tile entirely, thus Y will be monotonically increasing or decreasing across the entire tile, thus the extreme must lie at a corner/edge
-        // - or be the tile edge itself, thus the extreme will lie at the tile edge
-        //
-        // For X, considering only longitude, the tile would also have to contain lng=90° or lng=-90° (with neither being the tile edge) for the extreme to not lie on a tile edge.
-        // This can only happen at zoom levels 0 and 1, which are handled separately.
-        // But X is also scaled by cos(lat)! However, this can only cause an extreme to lie inside the tile if the tile crosses lat=0°, which cannot happen for zoom levels other than 0.
-        //
-        // For Z, similarly to X, the extremes must lie at lng=0° or lng=180°, but for zoom levels other than 0 these cannot lie inside the tile. Scaling by cos(lat) has the same effect as with the X axis.
-        //
-        // So checking the 4 tile corners only fails for tiles with zoom level <2, and these are handled separately with hardcoded AABBs:
-        // - zoom level 0 tile is the entire sphere
-        // - zoom level 1 tiles are "quarters of a sphere"
+    _computeTileBoundingVolume(tileID, wrap, elevation, options) {
+        var _a, _b;
+        let minElevation = elevation;
+        let maxElevation = elevation;
+        if (options === null || options === void 0 ? void 0 : options.terrain) {
+            const overscaledTileID = new performance$1.OverscaledTileID(tileID.z, wrap, tileID.z, tileID.x, tileID.y);
+            const minMax = options.terrain.getMinMaxElevation(overscaledTileID);
+            minElevation = (_a = minMax.minElevation) !== null && _a !== void 0 ? _a : elevation;
+            maxElevation = (_b = minMax.maxElevation) !== null && _b !== void 0 ? _b : elevation;
+        }
+        // Convert elevation to distances from center of a unit sphere planet (so that 1 is surface)
+        minElevation /= performance$1.earthRadius;
+        maxElevation /= performance$1.earthRadius;
+        minElevation += 1;
+        maxElevation += 1;
         if (tileID.z <= 0) {
             // Tile covers the entire sphere.
-            return new Aabb([-1, -1, -1], [1, 1, 1]);
+            return ConvexVolume.fromAabb(// We return an AABB in this case.
+            [-maxElevation, -maxElevation, -maxElevation], [maxElevation, maxElevation, maxElevation]);
         }
         else if (tileID.z === 1) {
             // Tile covers a quarter of the sphere.
             // X is 1 at lng=E90°
             // Y is 1 at **north** pole
             // Z is 1 at null island
-            return new Aabb([tileID.x === 0 ? -1 : 0, tileID.y === 0 ? 0 : -1, -1], [tileID.x === 0 ? 0 : 1, tileID.y === 0 ? 1 : 0, 1]);
+            return ConvexVolume.fromAabb(// We also just use AABBs for this zoom level.
+            [tileID.x === 0 ? -maxElevation : 0, tileID.y === 0 ? 0 : -maxElevation, -maxElevation], [tileID.x === 0 ? 0 : maxElevation, tileID.y === 0 ? maxElevation : 0, maxElevation]);
         }
         else {
-            // Compute AABB using the 4 corners.
             const corners = [
                 projectTileCoordinatesToSphere(0, 0, tileID.x, tileID.y, tileID.z),
                 projectTileCoordinatesToSphere(performance$1.EXTENT, 0, tileID.x, tileID.y, tileID.z),
                 projectTileCoordinatesToSphere(performance$1.EXTENT, performance$1.EXTENT, tileID.x, tileID.y, tileID.z),
                 projectTileCoordinatesToSphere(0, performance$1.EXTENT, tileID.x, tileID.y, tileID.z),
             ];
-            const min = [1, 1, 1];
-            const max = [-1, -1, -1];
+            const extremesPoints = [];
             for (const c of corners) {
-                for (let i = 0; i < 3; i++) {
-                    min[i] = Math.min(min[i], c[i]);
-                    max[i] = Math.max(max[i], c[i]);
+                extremesPoints.push(performance$1.scale$2([], c, maxElevation));
+            }
+            if (maxElevation !== minElevation) {
+                // Only add additional points if terrain is enabled and is not flat.
+                for (const c of corners) {
+                    extremesPoints.push(performance$1.scale$2([], c, minElevation));
                 }
             }
             // Special handling of poles - we need to extend the tile AABB
             // to include the pole for tiles that border mercator north/south edge.
-            if (tileID.y === 0 || (tileID.y === (1 << tileID.z) - 1)) {
-                const pole = [0, tileID.y === 0 ? 1 : -1, 0];
+            if (tileID.y === 0) {
+                extremesPoints.push([0, 1, 0]); // North pole
+            }
+            if (tileID.y === (1 << tileID.z) - 1) {
+                extremesPoints.push([0, -1, 0]); // South pole
+            }
+            // Compute a best-fit AABB for the frustum rejection test
+            const aabbMin = [1, 1, 1];
+            const aabbMax = [-1, -1, -1];
+            for (const c of extremesPoints) {
                 for (let i = 0; i < 3; i++) {
-                    min[i] = Math.min(min[i], pole[i]);
-                    max[i] = Math.max(max[i], pole[i]);
+                    aabbMin[i] = Math.min(aabbMin[i], c[i]);
+                    aabbMax[i] = Math.max(aabbMax[i], c[i]);
                 }
             }
-            return new Aabb(min, max);
+            // Now we compute the actual bounding volume.
+            // The up/down plane will be normal to the tile's center.
+            // The north/south plane will be used for the tile's north and south edge and will be orthogonal to the up/down plane.
+            // The left and right planes will be determined by the tile's east/west edges and will differ slightly - we are not creating a box!
+            // We will find the min and max extents for the up/down and north/south planes using the set of points
+            // where the extremes are likely to lie.
+            // Vector "center" (from planet center to tile center) will be our up/down axis.
+            const center = projectTileCoordinatesToSphere(performance$1.EXTENT / 2, performance$1.EXTENT / 2, tileID.x, tileID.y, tileID.z);
+            // Vector to the east of "center".
+            const centerEast = performance$1.cross([], [0, 1, 0], center);
+            performance$1.normalize(centerEast, centerEast);
+            // Vector to the north of "center" will be our north/south axis.
+            const north = performance$1.cross([], center, centerEast);
+            performance$1.normalize(north, north);
+            // Axes for the east and west edge of our bounding volume.
+            // These axes are NOT opposites of each other, they differ!
+            // They are also not orthogonal to the up/down and north/south axes.
+            const axisEast = performance$1.cross([], corners[2], corners[1]);
+            performance$1.normalize(axisEast, axisEast);
+            const axisWest = performance$1.cross([], corners[0], corners[3]);
+            performance$1.normalize(axisWest, axisWest);
+            // Now we will expand the extremes point set for bounding volume creation.
+            // We will also include the tile center point, since it will always be an extreme for the "center" axis.
+            extremesPoints.push(performance$1.scale$2([], center, maxElevation));
+            // No need to include a minElevation-scaled center, since we already have minElevation corners in the set and these will always lie lower than the center.
+            // The extremes might also lie on the midpoint of the north or south edge.
+            // For tiles in the north hemisphere, only the south edge can contain an extreme,
+            // since when we imagine the tile's actual shape projected onto the plane normal to "center" vector,
+            // the tile's north edge will curve towards the tile center, thus its extremes are accounted for by the
+            // corners, however the south edge will curve away from the center point, extending beyond the tile's edges,
+            // thus it must be included.
+            // The poles are an exception - they must always be included in the extremes, if the tile touches the north/south mercator range edge.
+            //
+            // A tile's exaggerated shape on the northern hemisphere, projected onto the normal plane of "center".
+            // The "c" is the tile's center point. The "m" is the edge mid point we are looking for.
+            //
+            //      /--       --\
+            //     /   -------   \
+            //    /               \
+            //   /        c        \
+            //  /                   \
+            // /--                 --\
+            //    -----       -----
+            //         ---m---
+            if (tileID.y >= (1 << tileID.z) / 2) {
+                // South hemisphere - include the tile's north edge midpoint
+                extremesPoints.push(performance$1.scale$2([], projectTileCoordinatesToSphere(performance$1.EXTENT / 2, 0, tileID.x, tileID.y, tileID.z), maxElevation));
+                // No need to include minElevation variant of this point, for the same reason why we don't include minElevation center.
+            }
+            if (tileID.y < (1 << tileID.z) / 2) {
+                // North hemisphere - include the tile's south edge midpoint
+                extremesPoints.push(performance$1.scale$2([], projectTileCoordinatesToSphere(performance$1.EXTENT / 2, performance$1.EXTENT, tileID.x, tileID.y, tileID.z), maxElevation));
+                // No need to include minElevation variant of this point, for the same reason why we don't include minElevation center.
+            }
+            // Find the min and max extends and the midpoints along each axis,
+            // using the set of extreme points.
+            const upDownMinMax = findAxisMinMax(center, extremesPoints);
+            const northSouthMinMax = findAxisMinMax(north, extremesPoints);
+            const planeUp = [-center[0], -center[1], -center[2], upDownMinMax.max];
+            const planeDown = [center[0], center[1], center[2], -upDownMinMax.min];
+            const planeNorth = [-north[0], -north[1], -north[2], northSouthMinMax.max];
+            const planeSouth = [north[0], north[1], north[2], -northSouthMinMax.min];
+            const planeEast = [...axisEast, 0];
+            const planeWest = [...axisWest, 0];
+            const points = [];
+            // North points
+            if (tileID.y === 0) {
+                // If the tile borders a pole, then 
+                points.push(performance$1.threePlaneIntersection(planeWest, planeEast, planeUp), performance$1.threePlaneIntersection(planeWest, planeEast, planeDown));
+            }
+            else {
+                points.push(performance$1.threePlaneIntersection(planeNorth, planeEast, planeUp), performance$1.threePlaneIntersection(planeNorth, planeEast, planeDown), performance$1.threePlaneIntersection(planeNorth, planeWest, planeUp), performance$1.threePlaneIntersection(planeNorth, planeWest, planeDown));
+            }
+            // South points
+            if (tileID.y === (1 << tileID.z) - 1) {
+                points.push(performance$1.threePlaneIntersection(planeWest, planeEast, planeUp), performance$1.threePlaneIntersection(planeWest, planeEast, planeDown));
+            }
+            else {
+                points.push(performance$1.threePlaneIntersection(planeSouth, planeEast, planeUp), performance$1.threePlaneIntersection(planeSouth, planeEast, planeDown), performance$1.threePlaneIntersection(planeSouth, planeWest, planeUp), performance$1.threePlaneIntersection(planeSouth, planeWest, planeDown));
+            }
+            return new ConvexVolume(points, [
+                planeUp,
+                planeDown,
+                planeNorth,
+                planeSouth,
+                planeEast,
+                planeWest
+            ], aabbMin, aabbMax);
         }
     }
+}
+function findAxisMinMax(axis, points) {
+    let min = +Infinity;
+    let max = -Infinity;
+    for (const c of points) {
+        const dot = performance$1.dot(axis, c);
+        min = Math.min(min, dot);
+        max = Math.max(max, dot);
+    }
+    return {
+        min,
+        max
+    };
 }
 
 class VerticalPerspectiveTransform {
@@ -50766,7 +51207,7 @@ class VerticalPerspectiveTransform {
         this._cachedClippingPlane = this._computeClippingPlane(globeRadiusPixels);
         const matrix = performance$1.clone$1(this._globeViewProjMatrixNoCorrectionInverted);
         performance$1.scale(matrix, matrix, [1, 1, -1]);
-        this._cachedFrustum = Frustum.fromInvProjectionMatrix(matrix);
+        this._cachedFrustum = Frustum.fromInvProjectionMatrix(matrix, 1, 0, this._cachedClippingPlane, true);
     }
     calculateFogMatrix(_unwrappedTileID) {
         performance$1.warnOnce('calculateFogMatrix is not supported on globe projection.');
@@ -51396,8 +51837,8 @@ class GlobeTransform {
         this._globeness = globeness;
         this._globeLatitudeErrorCorrectionRadians = errorCorrectionValue;
         this._calcMatrices();
-        this._verticalPerspectiveTransform.getCoveringTilesDetailsProvider().recalculateCache();
-        this._mercatorTransform.getCoveringTilesDetailsProvider().recalculateCache();
+        this._verticalPerspectiveTransform.getCoveringTilesDetailsProvider().prepareNextFrame();
+        this._mercatorTransform.getCoveringTilesDetailsProvider().prepareNextFrame();
     }
     get currentTransform() {
         return this.isGlobeRendering ? this._verticalPerspectiveTransform : this._mercatorTransform;
@@ -52081,6 +52522,7 @@ class Style extends performance$1.Evented {
         this.zoomHistory = new performance$1.ZoomHistory();
         this._loaded = false;
         this._availableImages = [];
+        this._globalState = {};
         this._resetUpdates();
         this.dispatcher.broadcast("SR" /* MessageType.setReferrer */, performance$1.getReferrer());
         rtlMainThreadPluginFactory().on(RTLPluginLoadedEventName, this._rtlPluginLoaded);
@@ -52103,6 +52545,65 @@ class Style extends performance$1.Evented {
                 }
             }
         });
+    }
+    setGlobalStateProperty(name, value) {
+        var _a, _b, _c;
+        this._checkLoaded();
+        const newValue = value === null ?
+            (_c = (_b = (_a = this.stylesheet.state) === null || _a === void 0 ? void 0 : _a[name]) === null || _b === void 0 ? void 0 : _b.default) !== null && _c !== void 0 ? _c : null :
+            value;
+        if (performance$1.deepEqual(newValue, this._globalState[name])) {
+            return this;
+        }
+        this._globalState[name] = newValue;
+        const sourceIdsToReload = this._findGlobalStateAffectedSources([name]);
+        for (const id in this.sourceCaches) {
+            if (sourceIdsToReload.has(id)) {
+                this._reloadSource(id);
+                this._changed = true;
+            }
+        }
+    }
+    getGlobalState() {
+        return this._globalState;
+    }
+    setGlobalState(newStylesheetState) {
+        this._checkLoaded();
+        const changedGlobalStateRefs = [];
+        for (const propertyName in newStylesheetState) {
+            const didChange = !performance$1.deepEqual(this._globalState[propertyName], newStylesheetState[propertyName].default);
+            if (didChange) {
+                changedGlobalStateRefs.push(propertyName);
+                this._globalState[propertyName] = newStylesheetState[propertyName].default;
+            }
+        }
+        const sourceIdsToReload = this._findGlobalStateAffectedSources(changedGlobalStateRefs);
+        for (const id in this.sourceCaches) {
+            if (sourceIdsToReload.has(id)) {
+                this._reloadSource(id);
+                this._changed = true;
+            }
+        }
+    }
+    /**
+     * Find all sources that are affected by the global state changes.
+     * For example, if a layer filter uses global-state expression, this function will return the source id of that layer.
+     */
+    _findGlobalStateAffectedSources(globalStateRefs) {
+        if (globalStateRefs.length === 0) {
+            return new Set();
+        }
+        const sourceIdsToReload = new Set();
+        for (const layerId in this._layers) {
+            const layer = this._layers[layerId];
+            const layoutAffectingGlobalStateRefs = layer.getLayoutAffectingGlobalStateRefs();
+            for (const ref of globalStateRefs) {
+                if (layoutAffectingGlobalStateRefs.has(ref)) {
+                    sourceIdsToReload.add(layer.source);
+                }
+            }
+        }
+        return sourceIdsToReload;
     }
     loadURL(url, options = {}, previousStyle) {
         this.fire(new performance$1.Event('dataloading', { dataType: 'style' }));
@@ -52135,7 +52636,7 @@ class Style extends performance$1.Evented {
         this._load(empty, { validate: false });
     }
     _load(json, options, previousStyle) {
-        var _a, _b;
+        var _a, _b, _c;
         const nextState = options.transformStyle ? options.transformStyle(previousStyle, json) : json;
         if (options.validate && emitValidationErrors(this, performance$1.validateStyle(nextState))) {
             return;
@@ -52157,6 +52658,7 @@ class Style extends performance$1.Evented {
         this._setProjectionInternal(((_a = this.stylesheet.projection) === null || _a === void 0 ? void 0 : _a.type) || 'mercator');
         this.sky = new Sky(this.stylesheet.sky);
         this.map.setTerrain((_b = this.stylesheet.terrain) !== null && _b !== void 0 ? _b : null);
+        this.setGlobalState((_c = this.stylesheet.state) !== null && _c !== void 0 ? _c : null);
         this.fire(new performance$1.Event('data', { dataType: 'style' }));
         this.fire(new performance$1.Event('style.load'));
     }
@@ -52534,6 +53036,9 @@ class Style extends performance$1.Evented {
                 case 'setProjection':
                     this.setProjection.apply(this, op.args);
                     break;
+                case 'setGlobalState':
+                    operations.push(() => this.setGlobalState.apply(this, op.args));
+                    break;
                 case 'setTransition':
                     operations.push(() => { });
                     break;
@@ -52822,14 +53327,14 @@ class Style extends performance$1.Evented {
             return;
         }
         if (filter === null || filter === undefined) {
-            layer.filter = undefined;
+            layer.setFilter(undefined);
             this._updateLayer(layer);
             return;
         }
         if (this._validate(performance$1.validateStyle.filter, `layers.${layer.id}.filter`, filter, null, options)) {
             return;
         }
-        layer.filter = performance$1.clone$2(filter);
+        layer.setFilter(performance$1.clone$2(filter));
         this._updateLayer(layer);
     }
     /**
@@ -56496,11 +57001,11 @@ function renderColorRelief(painter, sourceCache, layer, coords, stencilModes, de
         if (tile.demTexture) {
             const demTexture = tile.demTexture;
             demTexture.update(pixelData, { premultiply: false });
-            demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
+            demTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
         else {
             tile.demTexture = new performance$1.Texture(context, pixelData, gl.RGBA, { premultiply: false });
-            tile.demTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
+            tile.demTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
         }
         const mesh = projection.getMeshFromTileID(context, coord.canonical, useBorder, true, 'raster');
         const terrainData = (_a = painter.style.map.terrain) === null || _a === void 0 ? void 0 : _a.getTerrainData(coord);
@@ -63099,6 +63604,27 @@ let Map$1 = class Map extends Camera {
         return this._mapId;
     }
     /**
+     * Sets a global state property that can be retrieved with the [`global-state` expression](https://maplibre.org/maplibre-style-spec/expressions/#global-state).
+     * If the value is null, it resets the property to its default value defined in the [`state` style property](https://maplibre.org/maplibre-style-spec/root/#state).
+     *
+     * Note that changing `global-state` values defined in layout properties is not supported, and will be ignored.
+     *
+     * @param propertyName - The name of the state property to set.
+     * @param value - The value of the state property to set.
+     */
+    setGlobalStateProperty(propertyName, value) {
+        this.style.setGlobalStateProperty(propertyName, value);
+        return this._update(true);
+    }
+    /**
+     * Returns the global map state
+     *
+     * @returns The map state object.
+    */
+    getGlobalState() {
+        return this.style.getGlobalState();
+    }
+    /**
      * Adds an {@link IControl} to the map, calling `control.onAdd(this)`.
      *
      * An {@link ErrorEvent} will be fired if the image parameter is invalid.
@@ -65178,7 +65704,8 @@ let Map$1 = class Map extends Camera {
                 now,
                 fadeDuration,
                 zoomHistory: this.style.zoomHistory,
-                transition: this.style.getTransition()
+                transition: this.style.getTransition(),
+                globalState: this.style.getGlobalState()
             });
             const factor = parameters.crossFadingFactor();
             if (factor !== 1 || factor !== this._crossFadingFactor) {

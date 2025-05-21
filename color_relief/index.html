@@ -48,7 +48,7 @@ colorramps['LINZ'] = [
                     ["elevation"],
                     0, "#c0e0ffff",
                     0.1, "#d8d8d8ff",
-                    1, "#548359ff",
+                    3, "#548359ff",
                     255, "#32482dff",
                     1000, "#32482dff",
                     1200, "#adb7a3ff",
@@ -171,40 +171,7 @@ colorramps['monochrome'] = [
                     0.2, 'black',
                     3724, 'white'
                 ];
-function setColorReliefFromUi() {
-    const color_ramp_name = document.getElementById('color-ramp-selector').value;
-    const color_relief_style = {
-        id: 'hyspometric',
-        type: 'color-relief',
-        source: 'elevationSource',
-        paint: {
-            'color-relief-opacity': 1,
-            'color-relief-color': colorramps[color_ramp_name]
-        }
-    }
-    map.removeLayer('hillshade');
-    map.removeLayer('hyspometric');
-    map.addLayer(color_relief_style);
-    const hillshade_style = {
-        id: 'hillshade',
-        type: 'hillshade',
-        source: 'elevationSource',
-        paint: {
-            'hillshade-method': 'igor',
-            'hillshade-highlight-color': '#FFFFFF00',
-            'hillshade-exaggeration': 0.33
-        }
-    }
-    map.addLayer(hillshade_style);
-}
-var map = window.map = new maplibregl.Map({
-    container: 'map',
-    zoom: 6,
-    center: [170, -42],
-    pitch: 0,
-    renderWorldCopies: false,
-    hash: true,
-    style: {
+var style = {
         version: 8,
         sources: {
             terrainSource: {
@@ -218,8 +185,40 @@ var map = window.map = new maplibregl.Map({
                 tileSize: 256
             }
         },
-        layers: []
-    },
+        layers: [
+            {
+                id: 'hypsometric',
+                type: 'color-relief',
+                source: 'elevationSource',
+                paint: {
+                    'color-relief-opacity': 1,
+                    'color-relief-color': colorramps['LINZ']
+                }
+            },
+            {
+                id: 'hillshade',
+                type: 'hillshade',
+                source: 'elevationSource',
+                paint: {
+                    'hillshade-method': 'igor',
+                    'hillshade-highlight-color': '#FFFFFF00',
+                    'hillshade-exaggeration': 0.33
+                }
+            }
+        ]
+    };
+function setColorReliefFromUi() {
+    const color_ramp_name = document.getElementById('color-ramp-selector').value;
+    map.setPaintProperty('hypsometric', 'color-relief-color', colorramps[color_ramp_name]);
+}
+var map = window.map = new maplibregl.Map({
+    container: 'map',
+    zoom: 6,
+    center: [170, -42],
+    pitch: 0,
+    renderWorldCopies: false,
+    hash: true,
+    style: style,
     maxZoom: 18,
     maxPitch: 85
 });
