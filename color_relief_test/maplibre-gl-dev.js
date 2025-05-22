@@ -26674,11 +26674,6 @@ class ColorReliefStyleLayer extends StyleLayer {
             colorRamp.colorStops.push(colorRamp.colorStops[0]);
         }
         if (colorRamp.elevationStops.length <= maxLength) {
-            const newLength = nextPowerOfTwo(colorRamp.elevationStops.length);
-            while (colorRamp.elevationStops.length < newLength) {
-                colorRamp.elevationStops.push(colorRamp.elevationStops.at(-1) + 1);
-                colorRamp.colorStops.push(colorRamp.colorStops.at(-1));
-            }
             return colorRamp;
         }
         const remappedColorRamp = { elevationStops: [], colorStops: [] };
@@ -38801,7 +38796,7 @@ var devDependencies = {
 	"@types/minimist": "^1.2.5",
 	"@types/murmurhash-js": "^1.0.6",
 	"@types/nise": "^1.4.5",
-	"@types/node": "^22.15.19",
+	"@types/node": "^22.15.21",
 	"@types/offscreencanvas": "^2019.7.3",
 	"@types/pixelmatch": "^5.2.6",
 	"@types/pngjs": "^6.0.5",
@@ -38857,7 +38852,7 @@ var devDependencies = {
 	"rollup-plugin-sourcemaps2": "^0.5.2",
 	rw: "^1.3.3",
 	semver: "^7.7.2",
-	sharp: "^0.34.1",
+	sharp: "^0.34.2",
 	"shuffle-seed": "^1.1.6",
 	"source-map-explorer": "^2.5.3",
 	st: "^3.0.1",
