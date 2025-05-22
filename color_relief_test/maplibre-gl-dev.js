@@ -56984,7 +56984,7 @@ function renderColorRelief(painter, sourceCache, layer, coords, stencilModes, de
             context.activeTexture.set(gl.TEXTURE1);
             elevationTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
             context.activeTexture.set(gl.TEXTURE4);
-            colorTexture.bind(gl.NEAREST, gl.CLAMP_TO_EDGE);
+            colorTexture.bind(gl.LINEAR, gl.CLAMP_TO_EDGE);
             firstTile = false;
         }
         if (!dem || !dem.data) {
