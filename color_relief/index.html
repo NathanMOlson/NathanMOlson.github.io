@@ -36,6 +36,7 @@
                 <option value="geographical">geographical</option>
                 <option value="categorical">categorical</option>
                 <option value="monochrome">monochrome</option>
+                <option value="rgbk">rgbk</option>rgbk
             </select>
         </td>
     </tr>
@@ -170,6 +171,16 @@ colorramps['monochrome'] = [
                     0.1, '#111',
                     0.2, 'black',
                     3724, 'white'
+                ];
+                
+colorramps['rgbk'] = [
+                    "interpolate",
+                    ["linear"],
+                    ["elevation"],
+                    0, '#f00',
+                    1200, '#0f0',
+                    2400, '#00f',
+                    3724, 'black'
                 ];
 var style = {
         version: 8,
